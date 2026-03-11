@@ -1,30 +1,73 @@
+# =============================================================================
+# OpenClaw Docker Compose 配置文件
+# =============================================================================
+# 功能：
+#   - openclaw-gateway: 主服务，提供 API 和 WebSocket 连接
+#   - openclaw-cli: 命令行工具，用于配置管理和频道添加
+#
+# 多实例支持：
+#   通过 OPENCLAW_INSTANCE_ID 和 OPENCLAW_PORT_OFFSET 环境变量实现
+#   每个实例有独立的配置目录和端口
+#
+# 环境变量：
+#   OPENCLAW_INSTANCE_ID   - 实例标识，默认：default
+#   OPENCLAW_IMAGE         - Docker 镜像名，默认：openclaw:local
+#   OPENCLAW_GATEWAY_TOKEN - Gateway 认证 token
+#   OPENCLAW_CONFIG_DIR    - 配置目录路径
+#   OPENCLAW_WORKSPACE_DIR - 工作空间目录路径
+#   OPENCLAW_GATEWAY_PORT  - Gateway 端口，默认：18789
+#   OPENCLAW_BRIDGE_PORT   - Bridge 端口，默认：18790
+#   OPENCLAW_GATEWAY_BIND  - 绑定方式，默认：lan
+# =============================================================================
+
 services:
+  # -------------------------------------------------------------------------
+  # OpenClaw Gateway 服务
+  # -------------------------------------------------------------------------
+  # 主服务，负责处理客户端连接、与 LLM provider 通信、管理频道等
   openclaw-gateway:
+    # Docker 镜像
     image: ${OPENCLAW_IMAGE:-openclaw:local}
+
+    # 环境变量
     environment:
       HOME: /home/node
       TERM: xterm-256color
+      # Gateway 认证 token（必需）
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      # 允许非安全 WebSocket 连接（开发环境）
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
+      # Claude 相关配置（可选）
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
+
+    # 卷挂载
     volumes:
+      # 配置目录：存储 openclaw.json 等配置文件
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      # 工作空间：存储会话和任务数据
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-      ## Uncomment the lines below to enable sandbox isolation
-      ## (agents.defaults.sandbox). Requires Docker CLI in the image
-      ## (build with --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1) or use
-      ## docker-setup.sh with OPENCLAW_SANDBOX=1 for automated setup.
-      ## Set DOCKER_GID to the host's docker group GID (run: stat -c '%g' /var/run/docker.sock).
+      ## 取消注释以启用沙箱隔离
+      ## (agents.defaults.sandbox) 需要镜像中包含 Docker CLI
+      ## (使用 --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1 构建)
+      ## 或使用 OPENCLAW_SANDBOX=1 运行 docker-setup.sh 自动配置
       # - /var/run/docker.sock:/var/run/docker.sock
     # group_add:
     #   - "${DOCKER_GID:-999}"
+
+    # 端口映射
     ports:
+      # Gateway 服务端口（客户端连接）
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      # Bridge 端口（内部通信）
       - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
-    init: true
-    restart: unless-stopped
+
+    # 容器配置
+    init: true                    # 使用 init 处理信号和僵尸进程
+    restart: unless-stopped       # 除非手动停止，否则自动重启
+
+    # 启动命令
     command:
       [
         "node",
@@ -35,6 +78,8 @@ services:
         "--port",
         "18789",
       ]
+
+    # 健康检查配置
     healthcheck:
       test:
         [
@@ -43,34 +88,51 @@ services:
           "-e",
           "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      interval: 30s               # 检查间隔
+      timeout: 5s                 # 超时时间
+      retries: 5                  # 重试次数
+      start_period: 20s           # 启动宽限期
 
+  # -------------------------------------------------------------------------
+  # OpenClaw CLI 工具
+  # -------------------------------------------------------------------------
+  # 命令行工具，用于初始化配置、添加模型 provider、添加和管理频道等
   openclaw-cli:
+    # Docker 镜像（与 gateway 相同）
     image: ${OPENCLAW_IMAGE:-openclaw:local}
+
+    # 与 gateway 共享网络命名空间
     network_mode: "service:openclaw-gateway"
+
+    # 安全配置：移除不必要的网络权限
     cap_drop:
       - NET_RAW
       - NET_ADMIN
     security_opt:
       - no-new-privileges:true
+
+    # 环境变量
     environment:
       HOME: /home/node
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      BROWSER: echo
+      BROWSER: echo               # 禁用浏览器打开
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
+
+    # 卷挂载（与 gateway 共享配置）
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-    stdin_open: true
-    tty: true
+
+    # 交互模式配置
+    stdin_open: true              # 保持 STDIN 打开
+    tty: true                     # 分配伪终端
     init: true
     entrypoint: ["node", "dist/index.js"]
+
+    # 依赖 gateway 服务
     depends_on:
       - openclaw-gateway
