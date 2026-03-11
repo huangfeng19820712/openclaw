@@ -1,6 +1,35 @@
 #!/usr/bin/env bash
+# =============================================================================
+# OpenClaw Docker 部署脚本
+# =============================================================================
+# 功能：
+#   - 支持单实例快速部署
+#   - 支持多实例隔离部署（通过 INSTANCE_ID 和 PORT_OFFSET）
+#   - 支持跳过交互式 onboarding（快速启动 gateway）
+#   - 支持 Sandbox 沙箱模式
+#
+# 使用方式：
+#   # 快速启动（无交互）
+#   OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+#   ./docker-setup.sh --no-onboard
+#
+#   # 多实例部署
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+#
+# 环境变量：
+#   OPENCLAW_INSTANCE_ID   - 实例标识，默认：default
+#   OPENCLAW_PORT_OFFSET   - 端口偏移量，默认：0（Gateway 端口 = 18789 + offset）
+#   OPENCLAW_NO_ONBOARD    - 是否跳过 onboarding，默认：false
+#   OPENCLAW_IMAGE         - Docker 镜像名，默认：openclaw:local
+#   OPENCLAW_EXTRA_MOUNTS  - 额外挂载点，逗号分隔
+#   OPENCLAW_HOME_VOLUME   - 命名卷名称
+#   OPENCLAW_SANDBOX       - 是否启用沙箱，默认：false
+# =============================================================================
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 基础配置
+# -----------------------------------------------------------------------------
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 EXTRA_COMPOSE_FILE="$ROOT_DIR/docker-compose.extra.yml"
@@ -11,11 +40,36 @@ RAW_SANDBOX_SETTING="${OPENCLAW_SANDBOX:-}"
 SANDBOX_ENABLED=""
 DOCKER_SOCKET_PATH="${OPENCLAW_DOCKER_SOCKET:-}"
 
+# -----------------------------------------------------------------------------
+# 多实例支持配置
+# -----------------------------------------------------------------------------
+# INSTANCE_ID: 实例唯一标识，用于隔离配置目录
+INSTANCE_ID="${OPENCLAW_INSTANCE_ID:-default}"
+# PORT_OFFSET: 端口偏移量，用于多实例端口分配
+#   Gateway 端口 = 18789 + PORT_OFFSET
+#   Bridge 端口 = 18790 + PORT_OFFSET
+PORT_OFFSET="${OPENCLAW_PORT_OFFSET:-0}"
+# NO_ONBOARD: 是否跳过交互式 onboarding 配置
+NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-false}"
+
+# 支持 --no-onboard 命令行参数
+if [[ "${1:-}" == "--no-onboard" ]]; then
+  NO_ONBOARD=true
+fi
+
+# =============================================================================
+# 辅助函数
+# =============================================================================
+
+# 输出错误信息并退出
+# 参数：错误消息内容
 fail() {
   echo "ERROR: $*" >&2
   exit 1
 }
 
+# 检查命令是否存在
+# 参数：命令名称
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing dependency: $1" >&2
@@ -23,6 +77,8 @@ require_cmd() {
   fi
 }
 
+# 检查值是否为真（1/true/yes/on）
+# 参数：待检查的值
 is_truthy_value() {
   local raw="${1:-}"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
@@ -32,6 +88,9 @@ is_truthy_value() {
   esac
 }
 
+# 从配置文件中读取 gateway token
+# 支持 Python3 和 Node.js 两种解析方式
+# 返回：token 字符串（如果存在）
 read_config_gateway_token() {
   local config_path="$OPENCLAW_CONFIG_DIR/openclaw.json"
   if [[ ! -f "$config_path" ]]; then
@@ -80,6 +139,9 @@ NODE
   fi
 }
 
+# 从 .env 文件中读取 gateway token
+# 参数：env_path - .env 文件路径
+# 返回：token 字符串（如果存在）
 read_env_gateway_token() {
   local env_path="$1"
   local line=""
@@ -98,6 +160,7 @@ read_env_gateway_token() {
   fi
 }
 
+# 配置 Control UI 允许的源（非 loopback 绑定需要）
 ensure_control_ui_allowed_origins() {
   if [[ "${OPENCLAW_GATEWAY_BIND}" == "loopback" ]]; then
     return 0
@@ -122,6 +185,7 @@ ensure_control_ui_allowed_origins() {
   echo "Set gateway.controlUi.allowedOrigins to $allowed_origin_json for non-loopback bind."
 }
 
+# 同步 gateway 配置：设置 mode=local 和 bind 参数
 sync_gateway_mode_and_bind() {
   docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
     config set gateway.mode local >/dev/null
@@ -130,11 +194,13 @@ sync_gateway_mode_and_bind() {
   echo "Pinned gateway.mode=local and gateway.bind=$OPENCLAW_GATEWAY_BIND for Docker setup."
 }
 
+# 检查字符串是否包含非法字符（换行、回车、制表符）
 contains_disallowed_chars() {
   local value="$1"
   [[ "$value" == *$'\n'* || "$value" == *$'\r'* || "$value" == *$'\t'* ]]
 }
 
+# 验证挂载路径值
 validate_mount_path_value() {
   local label="$1"
   local value="$2"
@@ -149,6 +215,7 @@ validate_mount_path_value() {
   fi
 }
 
+# 验证命名卷名称
 validate_named_volume() {
   local value="$1"
   if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
@@ -156,6 +223,7 @@ validate_named_volume() {
   fi
 }
 
+# 验证挂载规格
 validate_mount_spec() {
   local mount="$1"
   if contains_disallowed_chars "$mount"; then
@@ -168,25 +236,39 @@ validate_mount_spec() {
   fi
 }
 
+# =============================================================================
+# 依赖检查和环境初始化
+# =============================================================================
+
+# 检查 Docker 依赖
 require_cmd docker
 if ! docker compose version >/dev/null 2>&1; then
   echo "Docker Compose not available (try: docker compose version)" >&2
   exit 1
 fi
 
+# Docker Socket 路径检测
 if [[ -z "$DOCKER_SOCKET_PATH" && "${DOCKER_HOST:-}" == unix://* ]]; then
   DOCKER_SOCKET_PATH="${DOCKER_HOST#unix://}"
 fi
 if [[ -z "$DOCKER_SOCKET_PATH" ]]; then
   DOCKER_SOCKET_PATH="/var/run/docker.sock"
 fi
+
+# 解析 Sandbox 设置
 if is_truthy_value "$RAW_SANDBOX_SETTING"; then
   SANDBOX_ENABLED="1"
 fi
 
-OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
-OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}"
+# -----------------------------------------------------------------------------
+# 配置目录和环境变量（支持多实例隔离）
+# -----------------------------------------------------------------------------
+# 配置目录：~/.openclaw-${INSTANCE_ID}，每个实例独立配置
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw-${INSTANCE_ID}}"
+# 工作空间目录：~/.openclaw-${INSTANCE_ID}/workspace
+OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw-${INSTANCE_ID}/workspace}"
 
+# 验证目录路径
 validate_mount_path_value "OPENCLAW_CONFIG_DIR" "$OPENCLAW_CONFIG_DIR"
 validate_mount_path_value "OPENCLAW_WORKSPACE_DIR" "$OPENCLAW_WORKSPACE_DIR"
 if [[ -n "$HOME_VOLUME_NAME" ]]; then
@@ -203,6 +285,7 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
   validate_mount_path_value "OPENCLAW_DOCKER_SOCKET" "$DOCKER_SOCKET_PATH"
 fi
 
+# 创建必要的目录
 mkdir -p "$OPENCLAW_CONFIG_DIR"
 mkdir -p "$OPENCLAW_WORKSPACE_DIR"
 # Seed directory tree eagerly so bind mounts work even on Docker Desktop/Windows
@@ -211,10 +294,12 @@ mkdir -p "$OPENCLAW_CONFIG_DIR/identity"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/agent"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/sessions"
 
+# 导出环境变量
 export OPENCLAW_CONFIG_DIR
 export OPENCLAW_WORKSPACE_DIR
-export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
-export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
+# 端口计算：基础端口 + 偏移量
+export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-$((18789 + PORT_OFFSET))}"
+export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-$((18790 + PORT_OFFSET))}"
 export OPENCLAW_GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-lan}"
 export OPENCLAW_IMAGE="$IMAGE_NAME"
 export OPENCLAW_DOCKER_APT_PACKAGES="${OPENCLAW_DOCKER_APT_PACKAGES:-}"
@@ -225,7 +310,7 @@ export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:
 export OPENCLAW_SANDBOX="$SANDBOX_ENABLED"
 export OPENCLAW_DOCKER_SOCKET="$DOCKER_SOCKET_PATH"
 
-# Detect Docker socket GID for sandbox group_add.
+# 检测 Docker socket GID（用于 sandbox group_add）
 DOCKER_GID=""
 if [[ -n "$SANDBOX_ENABLED" && -S "$DOCKER_SOCKET_PATH" ]]; then
   DOCKER_GID="$(stat -c '%g' "$DOCKER_SOCKET_PATH" 2>/dev/null || stat -f '%g' "$DOCKER_SOCKET_PATH" 2>/dev/null || echo "")"
