@@ -6,6 +6,7 @@
 #   - 支持单实例快速部署
 #   - 支持多实例隔离部署（通过 INSTANCE_ID 和 PORT_OFFSET）
 #   - 支持跳过交互式 onboarding（快速启动 gateway）
+#   - 支持跳过镜像构建（多实例复用已构建镜像）
 #   - 支持 Sandbox 沙箱模式
 #
 # 使用方式：
@@ -16,10 +17,15 @@
 #   # 多实例部署
 #   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
 #
+#   # 多实例部署（跳过镜像构建，复用已构建的镜像）
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true OPENCLAW_SKIP_BUILD=true ./docker-setup.sh
+#   ./docker-setup.sh --skip-build
+#
 # 环境变量：
 #   OPENCLAW_INSTANCE_ID   - 实例标识，默认：default
 #   OPENCLAW_PORT_OFFSET   - 端口偏移量，默认：0（Gateway 端口 = 18789 + offset）
 #   OPENCLAW_NO_ONBOARD    - 是否跳过 onboarding，默认：false
+#   OPENCLAW_SKIP_BUILD    - 是否跳过镜像构建，默认：false
 #   OPENCLAW_IMAGE         - Docker 镜像名，默认：openclaw:local
 #   OPENCLAW_EXTRA_MOUNTS  - 额外挂载点，逗号分隔
 #   OPENCLAW_HOME_VOLUME   - 命名卷名称
@@ -51,10 +57,17 @@ INSTANCE_ID="${OPENCLAW_INSTANCE_ID:-default}"
 PORT_OFFSET="${OPENCLAW_PORT_OFFSET:-0}"
 # NO_ONBOARD: 是否跳过交互式 onboarding 配置
 NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-false}"
+# SKIP_BUILD: 是否跳过镜像构建（多实例复用时使用）
+SKIP_BUILD="${OPENCLAW_SKIP_BUILD:-false}"
 
 # 支持 --no-onboard 命令行参数
 if [[ "${1:-}" == "--no-onboard" ]]; then
   NO_ONBOARD=true
+fi
+
+# 支持 --skip-build 命令行参数
+if [[ "${1:-}" == "--skip-build" ]]; then
+  SKIP_BUILD=true
 fi
 
 # =============================================================================
@@ -495,7 +508,14 @@ upsert_env "$ENV_FILE" \
   OPENCLAW_INSTALL_DOCKER_CLI \
   OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
 
-if [[ "$IMAGE_NAME" == "openclaw:local" ]]; then
+if [[ "$SKIP_BUILD" == "true" ]]; then
+  echo "==> Skipping image build (SKIP_BUILD=true)"
+  echo "    Reusing existing image: $IMAGE_NAME"
+  if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    echo "ERROR: Image '$IMAGE_NAME' not found. Run without --skip-build first to build the image." >&2
+    exit 1
+  fi
+elif [[ "$IMAGE_NAME" == "openclaw:local" ]]; then
   echo "==> Building Docker image: $IMAGE_NAME"
   docker build \
     --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=${OPENCLAW_DOCKER_APT_PACKAGES}" \
