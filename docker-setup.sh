@@ -578,6 +578,36 @@ if [[ "$NO_ONBOARD" != "true" ]]; then
 else
   echo ""
   echo "==> Skipping onboarding (NO_ONBOARD=true)"
+  # 自动生成 gateway token（如果未设置）
+  if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+    echo "==> Generating gateway token..."
+    if command -v node >/dev/null 2>&1; then
+      OPENCLAW_GATEWAY_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
+    else
+      # 回退方案：使用 /dev/urandom
+      OPENCLAW_GATEWAY_TOKEN="$(head -c 32 /dev/urandom | xxd -p)"
+    fi
+    export OPENCLAW_GATEWAY_TOKEN
+  fi
+  echo "Gateway token: ${OPENCLAW_GATEWAY_TOKEN}"
+
+  # 设置 gateway token 到配置
+  echo "==> Setting gateway token to config..."
+  docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
+    config set gateway.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1 || true
+
+  # 写入 .env 文件持久化
+  if [[ -f "$ENV_FILE" ]]; then
+    # 如果已存在，更新 token
+    if grep -q "^OPENCLAW_GATEWAY_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+      sed -i "s/^OPENCLAW_GATEWAY_TOKEN=.*/OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN/" "$ENV_FILE"
+    else
+      echo "OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN" >> "$ENV_FILE"
+    fi
+  else
+    echo "OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN" > "$ENV_FILE"
+  fi
+
   sync_gateway_mode_and_bind
 fi
 
