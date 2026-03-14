@@ -21,6 +21,9 @@ OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
 
 # 启动自定义实例（端口 18889 = 18789 + 100）
 OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+
+# 多实例部署（自动复用已构建的镜像，无需重复构建）
+OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
 ```
 
 ### 方式二：交互式启动
@@ -33,10 +36,14 @@ OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./doc
 OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 ./docker-setup.sh
 ```
 
-### 方式三：使用 --no-onboard 参数
+### 方式三：使用命令行参数
 
 ```bash
+# 跳过 onboarding
 ./docker-setup.sh --no-onboard
+
+# 跳过镜像构建（复用已构建的镜像）
+./docker-setup.sh --skip-build --no-onboard
 ```
 
 ## 环境变量
@@ -46,6 +53,7 @@ OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 ./docker-setup.sh
 | `OPENCLAW_INSTANCE_ID` | 实例唯一标识 | `default` | `gw1`, `gw2`, `test` |
 | `OPENCLAW_PORT_OFFSET` | 端口偏移量 | `0` | `100` (Gateway 端口=18889) |
 | `OPENCLAW_NO_ONBOARD` | 跳过交互式配置 | `false` | `true` |
+| `OPENCLAW_SKIP_BUILD` | 跳过镜像构建 | `false` | `true` (多实例复用镜像) |
 | `OPENCLAW_CONFIG_DIR` | 配置目录路径 | `~/.openclaw-${INSTANCE_ID}` | `/opt/openclaw/gw1` |
 | `OPENCLAW_WORKSPACE_DIR` | 工作空间目录 | `~/.openclaw-${INSTANCE_ID}/workspace` | - |
 | `OPENCLAW_GATEWAY_PORT` | Gateway 端口 | `18789 + PORT_OFFSET` | `18889` |
@@ -134,6 +142,15 @@ gw1                  /home/user/.openclaw-gw1 18889       stopped
 
 # 强制删除（无需确认）
 ./cleanup-instance.sh gw1 --force
+```
+
+### 自定义目录路径
+
+```bash
+# 使用自定义配置目录删除实例
+OPENCLAW_CONFIG_DIR=/data/openclaw-gw1/config \
+OPENCLAW_WORKSPACE_DIR=/data/openclaw-gw1/workspace \
+./cleanup-instance.sh gw1
 ```
 
 ### 删除所有实例
@@ -263,6 +280,24 @@ OPENCLAW_WORKSPACE_DIR=/data/openclaw/gw1/workspace \
 OPENCLAW_INSTANCE_ID=gw1 \
 OPENCLAW_PORT_OFFSET=100 \
 OPENCLAW_NO_ONBOARD=true \
+./docker-setup.sh
+```
+
+### 自定义目录 + 跳过构建
+
+```bash
+# 第一次部署（构建镜像）
+OPENCLAW_CONFIG_DIR=/data/openclaw/gw1/config \
+OPENCLAW_WORKSPACE_DIR=/data/openclaw/gw1/workspace \
+OPENCLAW_INSTANCE_ID=gw1 \
+OPENCLAW_PORT_OFFSET=100 \
+./docker-setup.sh
+
+# 后续部署（自动检测镜像存在，跳过构建）
+OPENCLAW_CONFIG_DIR=/data/openclaw/gw2/config \
+OPENCLAW_WORKSPACE_DIR=/data/openclaw/gw2/workspace \
+OPENCLAW_INSTANCE_ID=gw2 \
+OPENCLAW_PORT_OFFSET=200 \
 ./docker-setup.sh
 ```
 

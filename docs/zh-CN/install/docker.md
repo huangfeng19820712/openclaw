@@ -53,11 +53,33 @@ Docker 是**可选的**。仅当你想要容器化的 Gateway 网关或验证 Do
 - 通过 Docker Compose 启动 Gateway 网关
 - 生成 Gateway 网关令牌并写入 `.env`
 
+### 多实例部署
+
+```bash
+# 部署实例 gw1（端口 18889）
+OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+
+# 部署实例 gw2（端口 18989，自动复用镜像）
+OPENCLAW_INSTANCE_ID=gw2 OPENCLAW_PORT_OFFSET=200 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+```
+
+### 跳过构建
+
+```bash
+# 使用已存在的镜像
+OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_SKIP_BUILD=true ./docker-setup.sh
+```
+
 可选环境变量：
 
 - `OPENCLAW_DOCKER_APT_PACKAGES` — 在构建期间安装额外的 apt 包
 - `OPENCLAW_EXTRA_MOUNTS` — 添加额外的主机绑定挂载
 - `OPENCLAW_HOME_VOLUME` — 在命名卷中持久化 `/home/node`
+- `OPENCLAW_INSTANCE_ID` — 实例唯一标识，默认：`default`
+- `OPENCLAW_PORT_OFFSET` — 端口偏移量，默认：`0`（Gateway 端口 = 18789 + offset）
+- `OPENCLAW_NO_ONBOARD` — 跳过交互式 onboarding，默认：`false`
+- `OPENCLAW_SKIP_BUILD` — 跳过镜像构建（多实例复用），默认：`false`
+- `OPENCLAW_SANDBOX` — 启用沙箱模式，默认：`false`
 
 完成后：
 

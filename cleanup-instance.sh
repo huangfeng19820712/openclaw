@@ -6,12 +6,20 @@
 #   - 删除指定实例的容器、网络、配置文件
 #   - 批量删除所有实例
 #   - 清理残留的 Docker 资源
+#   - 支持自定义配置目录路径
 #
 # 使用方式：
 #   ./cleanup-instance.sh <instance_id>              # 删除指定实例
 #   ./cleanup-instance.sh --all                      # 删除所有实例
 #   ./cleanup-instance.sh --prune                    # 清理残留网络/卷
 #   ./cleanup-instance.sh --all --keep-data          # 删除所有实例但保留配置
+#
+#   # 自定义目录路径
+#   OPENCLAW_CONFIG_DIR=/path/to/config OPENCLAW_WORKSPACE_DIR=/path/to/workspace ./cleanup-instance.sh gw1
+#   OPENCLAW_CONFIG_DIR=/data/openclaw-gw1/config OPENCLAW_WORKSPACE_DIR=/data/openclaw-gw1/workspace ./cleanup-instance.sh gw1
+#
+#   # 自定义目录路径
+#   OPENCLAW_CONFIG_DIR=/data/openclaw-gw1/config OPENCLAW_WORKSPACE_DIR=/data/openclaw-gw1/workspace ./cleanup-instance.sh gw1
 #
 # 选项：
 #   --all        删除所有实例
@@ -20,7 +28,9 @@
 #   --force      跳过确认提示
 #
 # 环境变量：
-#   OPENCLAW_BASE_DIR   - 实例基础目录，默认：$HOME/.openclaw
+#   OPENCLAW_CONFIG_DIR    - 配置目录路径，默认：$HOME/.openclaw-${INSTANCE_ID}
+#   OPENCLAW_WORKSPACE_DIR - 工作空间目录，默认：$HOME/.openclaw-${INSTANCE_ID}/workspace
+#   OPENCLAW_BASE_DIR      - 实例基础目录（仅用于 --all 模式），默认：$HOME/.openclaw
 # =============================================================================
 set -euo pipefail
 
@@ -32,6 +42,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 基础配置
+# 支持自定义目录路径（与 docker-setup.sh 保持一致）
 BASE_DIR="${OPENCLAW_BASE_DIR:-$HOME/.openclaw}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -40,6 +51,12 @@ KEEP_DATA=false
 FORCE=false
 PRUNE_ONLY=false
 ALL_INSTANCES=false
+CUSTOM_DIR=false
+
+# 检查是否使用了自定义目录
+if [[ -n "${OPENCLAW_CONFIG_DIR:-}" || -n "${OPENCLAW_WORKSPACE_DIR:-}" ]]; then
+  CUSTOM_DIR=true
+fi
 
 # 输出错误信息并退出
 fail() {
@@ -112,9 +129,18 @@ instance_exists() {
   fi
 }
 
-# 获取实例的配置目录
+# 获取实例的配置目录（支持自定义路径）
 get_config_dir() {
   local instance_id="$1"
+
+  # 如果使用了自定义目录，优先使用环境变量
+  if [[ "$CUSTOM_DIR" == true && -n "${OPENCLAW_CONFIG_DIR:-}" ]]; then
+    # 从 OPENCLAW_CONFIG_DIR 派生出 workspace 目录
+    echo "${OPENCLAW_CONFIG_DIR}"
+    return
+  fi
+
+  # 默认模式：~/.openclaw-${INSTANCE_ID}
   if [[ "$instance_id" == "default" ]]; then
     echo "$BASE_DIR"
   else
@@ -122,19 +148,39 @@ get_config_dir() {
   fi
 }
 
-# 停止并删除容器
+# 获取工作空间目录（支持自定义路径）
+get_workspace_dir() {
+  local instance_id="$1"
+
+  # 如果使用了自定义目录，优先使用环境变量
+  if [[ "$CUSTOM_DIR" == true && -n "${OPENCLAW_WORKSPACE_DIR:-}" ]]; then
+    echo "${OPENCLAW_WORKSPACE_DIR}"
+    return
+  fi
+
+  # 默认模式：~/.openclaw-${INSTANCE_ID}/workspace
+  local config_dir
+  config_dir="$(get_config_dir "$instance_id")"
+  echo "$config_dir/workspace"
+}
+
+# 停止并删除容器（支持自定义目录）
 stop_and_remove_container() {
   local instance_id="$1"
   local config_dir
+  local workspace_dir
   config_dir="$(get_config_dir "$instance_id")"
+  workspace_dir="$(get_workspace_dir "$instance_id")"
 
   info "处理实例：$instance_id"
+  info "  配置目录：$config_dir"
+  info "  工作空间：$workspace_dir"
 
-  # 设置环境变量
+  # 设置环境变量（与 docker-setup.sh 保持一致）
   export OPENCLAW_CONFIG_DIR="$config_dir"
-  export OPENCLAW_WORKSPACE_DIR="$config_dir/workspace"
+  export OPENCLAW_WORKSPACE_DIR="$workspace_dir"
 
-  # 从环境文件读取其他变量
+  # 从环境文件读取其他变量（如果存在）
   local env_file="$config_dir/.env"
   if [[ -f "$env_file" ]]; then
     set -a
@@ -151,9 +197,20 @@ stop_and_remove_container() {
     docker compose stop openclaw-gateway 2>/dev/null || true
   fi
 
-  # 删除容器
+  # 删除容器（使用 COMPOSE_PROJECT_NAME）
   info "  删除容器..."
-  docker compose down --remove-orphans 2>/dev/null || true
+  local compose_project="openclaw-${instance_id}"
+  docker compose -p "$compose_project" down --remove-orphans 2>/dev/null || true
+
+  # 备用方案：直接通过容器名删除
+  local container_names
+  container_names=$(docker ps -a --filter "label=com.docker.compose.project=$compose_project" --format "{{.Names}}" 2>/dev/null || true)
+  if [[ -n "$container_names" ]]; then
+    for container in $container_names; do
+      info "    删除容器：$container"
+      docker rm -f "$container" 2>/dev/null || true
+    done
+  fi
 
   # 删除网络（如果有独立网络）
   info "  清理网络..."
@@ -228,6 +285,11 @@ OpenClaw 实例清理脚本
   $0 --prune                  # 清理残留网络和卷
   $0 --prune --force          # 强制清理，无需确认
 
+  # 自定义目录路径
+  OPENCLAW_CONFIG_DIR=/data/openclaw-gw1/config \
+  OPENCLAW_WORKSPACE_DIR=/data/openclaw-gw1/workspace \
+  $0 gw1
+
 注意：
   - 删除操作会停止并移除容器
   - 默认会删除配置文件，使用 --keep-data 保留
@@ -290,6 +352,13 @@ fi
 # 解析参数
 INSTANCE_ID="$(parse_args "$@")"
 
+# 检查自定义目录模式
+if [[ "$CUSTOM_DIR" == true && "$ALL_INSTANCES" == true ]]; then
+  warn "自定义目录模式下不支持 --all 选项"
+  info "请使用明确指定实例 ID 的方式删除"
+  exit 1
+fi
+
 # 仅清理残留资源
 if [[ "$PRUNE_ONLY" == true ]]; then
   if confirm "确定要清理残留的 Docker 资源吗？"; then
@@ -350,8 +419,16 @@ if [[ -z "$INSTANCE_ID" ]]; then
   fail "请指定实例 ID 或使用 --all 删除所有实例"
 fi
 
-if ! instance_exists "$INSTANCE_ID"; then
-  fail "实例 '$INSTANCE_ID' 不存在"
+# 自定义目录模式下显示提示
+if [[ "$CUSTOM_DIR" == true ]]; then
+  info "自定义目录模式"
+  info "  配置目录：$OPENCLAW_CONFIG_DIR"
+  info "  工作空间：$OPENCLAW_WORKSPACE_DIR"
+else
+  # 检查实例是否存在
+  if ! instance_exists "$INSTANCE_ID"; then
+    fail "实例 '$INSTANCE_ID' 不存在"
+  fi
 fi
 
 if [[ "$KEEP_DATA" == true ]]; then
@@ -367,8 +444,15 @@ fi
 
 stop_and_remove_container "$INSTANCE_ID"
 
-if [[ "$KEEP_DATA" != true ]]; then
+if [[ "$KEEP_DATA" != true && "$CUSTOM_DIR" != true ]]; then
   remove_config_files "$INSTANCE_ID"
+elif [[ "$CUSTOM_DIR" == true && "$KEEP_DATA" != true ]]; then
+  # 自定义目录模式下，只删除配置目录（如果存在）
+  config_dir="$(get_config_dir "$INSTANCE_ID")"
+  if [[ -d "$config_dir" ]]; then
+    info "删除自定义配置目录：$config_dir"
+    rm -rf "$config_dir"
+  fi
 fi
 
 success "实例 '$INSTANCE_ID' 已清理完成"
