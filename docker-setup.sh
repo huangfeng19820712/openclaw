@@ -510,6 +510,8 @@ upsert_env "$ENV_FILE" \
   OPENCLAW_INSTALL_DOCKER_CLI \
   OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
 
+# 镜像构建/拉取逻辑
+# 如果 SKIP_BUILD=true，强制跳过；否则检查镜像是否存在
 if [[ "$SKIP_BUILD" == "true" ]]; then
   echo "==> Skipping image build (SKIP_BUILD=true)"
   echo "    Reusing existing image: $IMAGE_NAME"
@@ -517,20 +519,28 @@ if [[ "$SKIP_BUILD" == "true" ]]; then
     echo "ERROR: Image '$IMAGE_NAME' not found. Run without --skip-build first to build the image." >&2
     exit 1
   fi
-elif [[ "$IMAGE_NAME" == "openclaw:local" ]]; then
-  echo "==> Building Docker image: $IMAGE_NAME"
-  docker build \
-    --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=${OPENCLAW_DOCKER_APT_PACKAGES}" \
-    --build-arg "OPENCLAW_EXTENSIONS=${OPENCLAW_EXTENSIONS}" \
-    --build-arg "OPENCLAW_INSTALL_DOCKER_CLI=${OPENCLAW_INSTALL_DOCKER_CLI:-}" \
-    -t "$IMAGE_NAME" \
-    -f "$ROOT_DIR/Dockerfile" \
-    "$ROOT_DIR"
+elif docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+  # 镜像已存在，自动跳过构建（多实例部署时复用）
+  echo "==> Image already exists: $IMAGE_NAME"
+  echo "    Skipping build (reuse existing image)"
+  echo "    Hint: Set OPENCLAW_SKIP_BUILD=true to suppress this message"
 else
-  echo "==> Pulling Docker image: $IMAGE_NAME"
-  if ! docker pull "$IMAGE_NAME"; then
-    echo "ERROR: Failed to pull image $IMAGE_NAME. Please check the image name and your access permissions." >&2
-    exit 1
+  # 镜像不存在，需要构建或拉取
+  if [[ "$IMAGE_NAME" == "openclaw:local" ]]; then
+    echo "==> Building Docker image: $IMAGE_NAME"
+    docker build \
+      --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=${OPENCLAW_DOCKER_APT_PACKAGES}" \
+      --build-arg "OPENCLAW_EXTENSIONS=${OPENCLAW_EXTENSIONS}" \
+      --build-arg "OPENCLAW_INSTALL_DOCKER_CLI=${OPENCLAW_INSTALL_DOCKER_CLI:-}" \
+      -t "$IMAGE_NAME" \
+      -f "$ROOT_DIR/Dockerfile" \
+      "$ROOT_DIR"
+  else
+    echo "==> Pulling Docker image: $IMAGE_NAME"
+    if ! docker pull "$IMAGE_NAME"; then
+      echo "ERROR: Failed to pull image $IMAGE_NAME. Please check the image name and your access permissions." >&2
+      exit 1
+    fi
   fi
 fi
 
