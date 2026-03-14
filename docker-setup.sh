@@ -310,6 +310,8 @@ mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/sessions"
 # 导出环境变量
 export OPENCLAW_CONFIG_DIR
 export OPENCLAW_WORKSPACE_DIR
+# 多实例部署：使用 INSTANCE_ID 作为项目名，避免容器名冲突
+export COMPOSE_PROJECT_NAME="openclaw-${INSTANCE_ID}"
 # 端口计算：基础端口 + 偏移量（强制重新计算，不使用已设置的值）
 export OPENCLAW_GATEWAY_PORT="$((18789 + PORT_OFFSET))"
 export OPENCLAW_BRIDGE_PORT="$((18790 + PORT_OFFSET))"
