@@ -68,6 +68,7 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      - ${OPENCLAW_CONFIG_DIR}/.bashrc:/home/node/.bashrc:ro
     stdin_open: true
     tty: true
     init: true

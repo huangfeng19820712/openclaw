@@ -307,6 +307,21 @@ mkdir -p "$OPENCLAW_CONFIG_DIR/identity"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/agent"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/sessions"
 
+# 创建 .bashrc 文件（用于 CLI alias）
+bashrc_file="$OPENCLAW_CONFIG_DIR/.bashrc"
+if [[ ! -f "$bashrc_file" ]]; then
+  echo "==> Creating .bashrc with openclaw CLI alias"
+  cat > "$bashrc_file" << 'BASHRC'
+# OpenClaw CLI alias
+alias openclaw='node /app/dist/index.js'
+
+# Load default bashrc if exists
+if [[ -f /etc/bash.bashrc ]]; then
+  source /etc/bash.bashrc
+fi
+BASHRC
+fi
+
 # 导出环境变量
 export OPENCLAW_CONFIG_DIR
 export OPENCLAW_WORKSPACE_DIR
@@ -591,10 +606,27 @@ else
   fi
   echo "Gateway token: ${OPENCLAW_GATEWAY_TOKEN}"
 
-  # 设置 gateway token 到配置
+  # 设置 gateway token 到配置（通过 CLI）
   echo "==> Setting gateway token to config..."
+  token_set_result=0
   docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-    config set gateway.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1 || true
+    config set gateway.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1 || token_set_result=$?
+
+  # 如果 CLI 方式失败，直接修改配置文件
+  if [[ $token_set_result -ne 0 ]]; then
+    echo "CLI config failed, writing config file directly..."
+    config_file="$OPENCLAW_CONFIG_DIR/openclaw.json"
+    if [[ -f "$config_file" ]]; then
+      # 使用 node 直接修改 JSON 文件
+      docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint node openclaw-cli -e "
+        const fs = require('fs');
+        const config = JSON.parse(fs.readFileSync('/home/node/.openclaw/openclaw.json', 'utf-8'));
+        config.gateway = config.gateway || {};
+        config.gateway.token = '$OPENCLAW_GATEWAY_TOKEN';
+        fs.writeFileSync('/home/node/.openclaw/openclaw.json', JSON.stringify(config, null, 2) + '\n');
+      "
+    fi
+  fi
 
   # 写入 .env 文件持久化
   if [[ -f "$ENV_FILE" ]]; then
