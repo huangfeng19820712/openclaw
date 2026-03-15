@@ -101,7 +101,6 @@ export function applySettingsFromUrl(host: SettingsHost) {
   const tokenRaw = hashParams.get("token");
   const passwordRaw = params.get("password") ?? hashParams.get("password");
   const sessionRaw = params.get("session") ?? hashParams.get("session");
-  const pairTokenRaw = params.get("pairToken");
   let shouldCleanUrl = false;
 
   if (params.has("token")) {
@@ -117,21 +116,6 @@ export function applySettingsFromUrl(host: SettingsHost) {
       applySettings(host, { ...host.settings, token });
     }
     hashParams.delete("token");
-    shouldCleanUrl = true;
-  }
-
-  // Handle pairToken for automatic device pairing
-  if (pairTokenRaw != null) {
-    const pairToken = pairTokenRaw.trim();
-    if (pairToken) {
-      // Store pairToken for later use
-      host.pendingGatewayToken = pairToken;
-      // Schedule automatic pairing after connection
-      setTimeout(() => {
-        void attemptAutoPairing(pairToken);
-      }, 2000);
-    }
-    params.delete("pairToken");
     shouldCleanUrl = true;
   }
 
@@ -176,32 +160,6 @@ export function applySettingsFromUrl(host: SettingsHost) {
   const nextHash = hashParams.toString();
   url.hash = nextHash ? `#${nextHash}` : "";
   window.history.replaceState({}, "", url.toString());
-}
-
-async function attemptAutoPairing(pairToken: string): Promise<void> {
-  try {
-    const response = await fetch("/api/pair", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ pairToken }),
-    });
-
-    const result = await response.json();
-
-    if (result.ok) {
-      if (result.paired) {
-        console.log("[pairToken] Device paired successfully:", result.deviceId);
-      } else if (result.alreadyPaired) {
-        console.log("[pairToken] Device already paired");
-      }
-    } else {
-      console.warn("[pairToken] Pairing failed:", result.error);
-    }
-  } catch (err) {
-    console.warn("[pairToken] Auto-pairing request failed:", err);
-  }
 }
 
 export function setTab(host: SettingsHost, next: Tab) {

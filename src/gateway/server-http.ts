@@ -30,7 +30,6 @@ import { normalizeCanvasScopedUrl } from "./canvas-capability.js";
 import {
   handleControlUiAvatarRequest,
   handleControlUiHttpRequest,
-  handleControlUiPairRequest,
   type ControlUiRootState,
 } from "./control-ui.js";
 import { applyHookMappings } from "./hooks-mapping.js";
@@ -736,14 +735,6 @@ export function createGatewayHttpServer(opts: {
       );
 
       if (controlUiEnabled) {
-        requestStages.push({
-          name: "control-ui-pair",
-          run: () =>
-            handleControlUiPairRequest(req, res, {
-              basePath: controlUiBasePath,
-              config: configSnapshot,
-            }),
-        });
         requestStages.push({
           name: "control-ui-avatar",
           run: () =>

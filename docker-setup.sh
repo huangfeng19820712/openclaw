@@ -803,7 +803,12 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 自动生成 Control UI 配对 URL（一次性使用）
+# 自动生成 Control UI 访问 URL（部署时自动完成配对）
+# -----------------------------------------------------------------------------
+# 说明：
+#   - 本脚本在网关启动后自动检查并批准待处理的设备配对请求
+#   - 配对通过 CLI 命令（devices list / devices approve）完成，无需修改源码
+#   - 输出的 URL 包含 gateway token，访问时自动使用已配对的设备身份
 # -----------------------------------------------------------------------------
 generate_pairing_url() {
   local gateway_port="$1"
@@ -859,14 +864,8 @@ generate_pairing_url() {
     fi
   done
 
-  # 生成配对 Token（用于自动配对）
-  # pairToken 格式：<gateway_token>p（在 gateway token 后添加 'p' 后缀）
-  local pair_token="${gateway_token}p"
-
-  # 生成访问 URL
-  # 使用 pairToken 参数，首次访问时会自动批准配对
+  # 生成访问 URL（使用 gateway token 进行认证）
   local access_url="http://127.0.0.1:$gateway_port/?token=$gateway_token&session=main"
-  local auto_pair_url="http://127.0.0.1:$gateway_port/?pairToken=${pair_token}&session=main"
 
   echo ""
   echo "==> Control UI 快速访问链接"
@@ -876,11 +875,7 @@ generate_pairing_url() {
     echo "    $access_url"
     echo ""
   else
-    echo "    使用以下链接访问 Control UI（首次访问会自动批准配对）："
-    echo ""
-    echo "    $auto_pair_url"
-    echo ""
-    echo "    或者使用带 token 的链接（需要手动批准配对）："
+    echo "    访问以下链接进入 Control UI（需手动批准配对）："
     echo ""
     echo "    $access_url"
     echo ""
