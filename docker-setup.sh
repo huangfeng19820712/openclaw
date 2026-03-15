@@ -786,6 +786,74 @@ else
   fi
 fi
 
+# -----------------------------------------------------------------------------
+# 自动生成 Control UI 配对 URL（一次性使用）
+# -----------------------------------------------------------------------------
+generate_pairing_url() {
+  local gateway_port="$1"
+  local gateway_token="$2"
+  local config_dir="$3"
+  local compose_hint="$4"
+
+  # 等待 3 秒让网关完全启动
+  sleep 3
+
+  # 尝试自动批准来自 localhost 的配对请求
+  local approved=false
+  local pair_url=""
+  local pair_token=""
+
+  # 生成一次性配对令牌
+  if command -v node >/dev/null 2>&1; then
+    pair_token="$(node -e 'console.log(require("crypto").randomBytes(16).toString("hex"))')"
+  else
+    pair_token="$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | xxd -p)"
+  fi
+
+  # 将配对令牌写入临时文件
+  local pair_file="$config_dir/.pair_token"
+  echo "$pair_token:$gateway_token" > "$pair_file"
+  chmod 600 "$pair_file"
+
+  # 尝试自动批准配对请求
+  local pending_count=""
+  pending_count="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -c "Pending" || echo "0")"
+
+  if [[ "$pending_count" -gt 0 ]]; then
+    # 有待处理的请求，尝试批准最新的
+    local request_id=""
+    request_id="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -oE "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" | head -1)"
+
+    if [[ -n "$request_id" ]]; then
+      ${compose_hint} run --rm openclaw-cli devices approve "$request_id" >/dev/null 2>&1 && approved=true
+    fi
+  fi
+
+  # 生成配对 URL
+  pair_url="http://127.0.0.1:$gateway_port/?pairToken=$pair_token"
+
+  echo ""
+  echo "==> Control UI 快速访问（配对信息）"
+  if [[ "$approved" == true ]]; then
+    echo "    已自动批准设备配对，可直接访问："
+    echo ""
+    echo "    $pair_url"
+    echo ""
+    echo "    Token: $gateway_token"
+  else
+    echo "    首次访问需要配对，请使用以下方式之一："
+    echo ""
+    echo "    1. 访问 Control UI 后，在设置中输入 Token："
+    echo "       $pair_url"
+    echo "       Token: $gateway_token"
+    echo ""
+    echo "    2. 或使用 CLI 批准配对请求："
+    echo "       ${compose_hint} run --rm openclaw-cli devices list"
+    echo "       ${compose_hint} run --rm openclaw-cli devices approve <requestId>"
+  fi
+}
+
+# 输出完成信息
 echo ""
 echo "Gateway running with host port mapping."
 echo "Access from tailnet devices via the host's tailnet IP."
@@ -796,3 +864,8 @@ echo ""
 echo "Commands:"
 echo "  ${COMPOSE_HINT} logs -f openclaw-gateway"
 echo "  ${COMPOSE_HINT} exec openclaw-gateway node dist/index.js health --token \"$OPENCLAW_GATEWAY_TOKEN\""
+
+# 生成配对 URL（如果是在 NO_ONBOARD 模式下）
+if [[ "$NO_ONBOARD" == "true" ]]; then
+  generate_pairing_url "$OPENCLAW_GATEWAY_PORT" "$OPENCLAW_GATEWAY_TOKEN" "$OPENCLAW_CONFIG_DIR" "$COMPOSE_HINT"
+fi
