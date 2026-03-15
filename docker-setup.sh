@@ -622,7 +622,7 @@ else
         const fs = require('fs');
         const config = JSON.parse(fs.readFileSync('/home/node/.openclaw/openclaw.json', 'utf-8'));
         config.gateway = config.gateway || {};
-        config.gateway.token = '$OPENCLAW_GATEWAY_TOKEN';
+        config.gateway.token = \"$OPENCLAW_GATEWAY_TOKEN\";
         fs.writeFileSync('/home/node/.openclaw/openclaw.json', JSON.stringify(config, null, 2) + '\n');
       "
     fi
