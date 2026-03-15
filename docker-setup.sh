@@ -610,7 +610,7 @@ else
   echo "==> Setting gateway token to config..."
   token_set_result=0
   docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-    config set gateway.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1 || token_set_result=$?
+    config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1 || token_set_result=$?
 
   # 如果 CLI 方式失败，直接修改配置文件
   if [[ $token_set_result -ne 0 ]]; then
