@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenClaw Invite Code Verification Server
+After=network.target
+
+[Service]
+Type=simple
+User=your-user
+WorkingDirectory=/path/to/openclaw/plugins/node-auto-register
+ExecStart=/usr/bin/node scripts/invite-code-server.js
+Restart=always
+RestartSec=10
+Environment=INVITE_SERVER_PORT=18795
+Environment=OPENCLAW_DIR=/home/your-user/.openclaw
+
+[Install]
+WantedBy=multi-user.target

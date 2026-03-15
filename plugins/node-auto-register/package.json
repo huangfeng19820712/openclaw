@@ -1,0 +1,20 @@
+{
+  "name": "openclaw-node-auto-register",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Auto-register openclaw node with invite code",
+  "main": "src/index.js",
+  "bin": {
+    "openclaw-node-register": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.14.0",
+    "commander": "^11.1.0"
+  }
+}

@@ -298,48 +298,6 @@ OpenClaw 实例清理脚本
 EOF
 }
 
-# 解析命令行参数
-parse_args() {
-  local instance_id=""
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --all)
-        ALL_INSTANCES=true
-        shift
-        ;;
-      --prune)
-        PRUNE_ONLY=true
-        shift
-        ;;
-      --keep-data)
-        KEEP_DATA=true
-        shift
-        ;;
-      --force)
-        FORCE=true
-        shift
-        ;;
-      --help|-h)
-        show_usage
-        exit 0
-        ;;
-      -*)
-        fail "未知选项：$1"
-        ;;
-      *)
-        instance_id="$1"
-        shift
-        ;;
-    esac
-  done
-
-  # 返回实例 ID（如果有）
-  if [[ -n "$instance_id" ]]; then
-    echo "$instance_id"
-  fi
-}
-
 # -----------------------------------------------------------------------------
 # 主程序
 # -----------------------------------------------------------------------------
@@ -349,8 +307,39 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
-# 解析参数
-INSTANCE_ID="$(parse_args "$@")"
+# 解析命令行参数（直接在主 shell 中解析，避免子 shell 变量作用域问题）
+INSTANCE_ID=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --all)
+      ALL_INSTANCES=true
+      shift
+      ;;
+    --prune)
+      PRUNE_ONLY=true
+      shift
+      ;;
+    --keep-data)
+      KEEP_DATA=true
+      shift
+      ;;
+    --force)
+      FORCE=true
+      shift
+      ;;
+    --help|-h)
+      show_usage
+      exit 0
+      ;;
+    -*)
+      fail "未知选项：$1"
+      ;;
+    *)
+      INSTANCE_ID="$1"
+      shift
+      ;;
+  esac
+done
 
 # 检查自定义目录模式
 if [[ "$CUSTOM_DIR" == true && "$ALL_INSTANCES" == true ]]; then
