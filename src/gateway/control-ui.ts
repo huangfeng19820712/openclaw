@@ -7,6 +7,7 @@ import {
   isPackageProvenControlUiRootSync,
   resolveControlUiRootSync,
 } from "../infra/control-ui-assets.js";
+import { approveDevicePairing, listDevicePairing } from "../infra/device-pairing.js";
 import { isWithinDir } from "../infra/path-safety.js";
 import { openVerifiedFileSync } from "../infra/safe-open-sync.js";
 import { AVATAR_MAX_BYTES } from "../shared/avatar-policy.js";
@@ -29,6 +30,7 @@ import {
   normalizeControlUiBasePath,
   resolveAssistantAvatarUrl,
 } from "./control-ui-shared.js";
+import { safeEqualSecret } from "../security/secret-equal.js";
 
 const ROOT_PREFIX = "/";
 const CONTROL_UI_ASSETS_MISSING_MESSAGE =
@@ -151,6 +153,95 @@ function respondHeadForFile(req: IncomingMessage, res: ServerResponse, filePath:
 
 function isValidAgentId(agentId: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(agentId);
+}
+
+export function handleControlUiPairRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: { basePath?: string; config?: OpenClawConfig },
+): boolean {
+  const urlRaw = req.url;
+  if (!urlRaw) {
+    return false;
+  }
+
+  const url = new URL(urlRaw, "http://localhost");
+  const basePath = normalizeControlUiBasePath(opts?.basePath);
+
+  // Check if this is a pairToken request
+  const pairTokenPath = basePath ? `${basePath}/api/pair` : "/api/pair";
+  if (url.pathname !== pairTokenPath) {
+    return false;
+  }
+
+  // Only accept POST requests
+  if (req.method !== "POST") {
+    res.statusCode = 405;
+    res.setHeader("Allow", "POST");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("Method Not Allowed");
+    return true;
+  }
+
+  applyControlUiSecurityHeaders(res);
+
+  // Parse JSON body
+  let body = "";
+  req.on("data", (chunk) => {
+    body += chunk.toString();
+  });
+
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body);
+      const pairToken = data.pairToken;
+
+      if (!pairToken || typeof pairToken !== "string") {
+        sendJson(res, 400, { ok: false, error: "pairToken is required" });
+        return;
+      }
+
+      // Validate pairToken against gateway token
+      const gatewayToken = opts.config?.gateway?.auth?.token;
+      if (!gatewayToken) {
+        sendJson(res, 500, { ok: false, error: "gateway token not configured" });
+        return;
+      }
+
+      // pairToken format: <gatewayToken>p (gateway token with 'p' suffix for pairing)
+      const expectedPairToken = gatewayToken + "p";
+      if (!safeEqualSecret(pairToken, expectedPairToken)) {
+        sendJson(res, 401, { ok: false, error: "invalid pairToken" });
+        return;
+      }
+
+      // Find and approve the first pending pairing request
+      const list = await listDevicePairing();
+      if (list.pending.length === 0) {
+        // No pending requests - device might already be paired
+        sendJson(res, 200, { ok: true, alreadyPaired: true });
+        return;
+      }
+
+      // Approve the most recent pending request
+      const pending = list.pending[0];
+      const result = await approveDevicePairing(pending.requestId);
+
+      if (result) {
+        sendJson(res, 200, {
+          ok: true,
+          paired: true,
+          deviceId: result.device.deviceId,
+        });
+      } else {
+        sendJson(res, 500, { ok: false, error: "failed to approve pairing" });
+      }
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: "invalid request body" });
+    }
+  });
+
+  return true;
 }
 
 export function handleControlUiAvatarRequest(

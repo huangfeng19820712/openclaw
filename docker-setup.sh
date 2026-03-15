@@ -859,11 +859,14 @@ generate_pairing_url() {
     fi
   done
 
-  # 生成配对 Token URL（用于自动配对）
-  # pairToken 参数会在 Control UI 中自动完成配对流程
-  local pairing_token="${gateway_token}p"
+  # 生成配对 Token（用于自动配对）
+  # pairToken 格式：<gateway_token>p（在 gateway token 后添加 'p' 后缀）
+  local pair_token="${gateway_token}p"
+
+  # 生成访问 URL
+  # 使用 pairToken 参数，首次访问时会自动批准配对
   local access_url="http://127.0.0.1:$gateway_port/?token=$gateway_token&session=main"
-  local auto_pair_url="http://127.0.0.1:$gateway_port/?pairToken=${pairing_token}&session=main"
+  local auto_pair_url="http://127.0.0.1:$gateway_port/?pairToken=${pair_token}&session=main"
 
   echo ""
   echo "==> Control UI 快速访问链接"
@@ -873,13 +876,13 @@ generate_pairing_url() {
     echo "    $access_url"
     echo ""
   else
-    echo "    访问以下链接打开 Control UI（需要手动批准配对）："
-    echo ""
-    echo "    $access_url"
-    echo ""
-    echo "    或者使用自动配对链接（首次访问会自动批准）："
+    echo "    使用以下链接访问 Control UI（首次访问会自动批准配对）："
     echo ""
     echo "    $auto_pair_url"
+    echo ""
+    echo "    或者使用带 token 的链接（需要手动批准配对）："
+    echo ""
+    echo "    $access_url"
     echo ""
     echo "    如需手动批准配对，请使用以下命令："
     echo "    ${compose_hint} run --rm openclaw-cli devices list"
