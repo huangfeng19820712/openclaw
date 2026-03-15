@@ -193,8 +193,17 @@ ensure_control_ui_allowed_origins() {
     allowed_origins+=("http://$host_ip:$OPENCLAW_GATEWAY_PORT")
   fi
 
+  # 使用 node 生成 JSON 数组（避免依赖 jq）
   local allowed_origin_json
-  allowed_origin_json="$(printf '%s\n' "${allowed_origins[@]}" | jq -R . | jq -s .)"
+  local origins_str=""
+  for i in "${!allowed_origins[@]}"; do
+    if [[ $i -eq 0 ]]; then
+      origins_str="\"${allowed_origins[$i]}\""
+    else
+      origins_str="$origins_str,\"${allowed_origins[$i]}\""
+    fi
+  done
+  allowed_origin_json="[$origins_str]"
 
   local current_allowed_origins
   current_allowed_origins="$(
