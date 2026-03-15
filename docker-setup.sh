@@ -635,27 +635,29 @@ else
   fi
   echo "Gateway token: ${OPENCLAW_GATEWAY_TOKEN}"
 
-  # 设置 gateway token 到配置（通过 CLI）
-  echo "==> Setting gateway token to config..."
-  token_set_result=0
-  docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-    config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1 || token_set_result=$?
+  # 设置 gateway token 到配置（通过 CLI 或直接修改配置文件）
+  echo "==> Setting gateway token and auth mode to config..."
+  config_file="$OPENCLAW_CONFIG_DIR/openclaw.json"
 
-  # 如果 CLI 方式失败，直接修改配置文件
-  if [[ $token_set_result -ne 0 ]]; then
-    echo "CLI config failed, writing config file directly..."
-    config_file="$OPENCLAW_CONFIG_DIR/openclaw.json"
-    if [[ -f "$config_file" ]]; then
-      # 使用 node 直接修改 JSON 文件
-      docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint node openclaw-cli -e "
-        const fs = require('fs');
-        const config = JSON.parse(fs.readFileSync('/home/node/.openclaw/openclaw.json', 'utf-8'));
-        config.gateway = config.gateway || {};
-        config.gateway.auth = config.gateway.auth || {};
-        config.gateway.auth.token = \"$OPENCLAW_GATEWAY_TOKEN\";
-        fs.writeFileSync('/home/node/.openclaw/openclaw.json', JSON.stringify(config, null, 2) + '\n');
-      "
-    fi
+  # 直接修改配置文件（更可靠，不依赖 CLI 连接）
+  if [[ -f "$config_file" ]]; then
+    docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint node openclaw-cli -e "
+      const fs = require('fs');
+      const configPath = '/home/node/.openclaw/openclaw.json';
+      let config;
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      } catch (e) {
+        config = {};
+      }
+      config.gateway = config.gateway || {};
+      config.gateway.auth = config.gateway.auth || {};
+      config.gateway.auth.token = \"$OPENCLAW_GATEWAY_TOKEN\";
+      config.gateway.auth.mode = 'token';
+      config.gateway.bind = 'loopback';
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+      console.log('Config updated successfully');
+    "
   fi
 
   # 写入 .env 文件持久化
@@ -809,55 +811,77 @@ generate_pairing_url() {
   local config_dir="$3"
   local compose_hint="$4"
 
-  # 等待 5 秒让网关完全启动并接收配对请求
-  sleep 5
+  # 等待网关完全启动
+  sleep 8
 
   # 尝试自动批准配对请求
   local approved=false
   local retry=0
-  local max_retry=3
+  local max_retry=5
+
+  echo ""
+  echo "==> 等待网关启动并检查配对请求..."
 
   while [[ $retry -lt $max_retry && "$approved" == false ]]; do
     retry=$((retry + 1))
 
     # 检查是否有待处理的配对请求
-    local pending_count=""
-    pending_count="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -c "Pending" || true)"
-    pending_count="${pending_count//[^0-9]/}"
-    pending_count="${pending_count:-0}"
+    local devices_output=""
+    devices_output="$(${compose_hint} run --rm openclaw-cli devices list 2>&1 || true)"
 
-    if [[ "$pending_count" -gt 0 ]]; then
-      # 有待处理的请求，获取最新的 requestId
+    if echo "$devices_output" | grep -qi "pending"; then
+      # 有待处理的请求，获取 requestId
       local request_id=""
-      request_id="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -oE "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" | head -1)"
+      request_id="$(echo "$devices_output" | grep -oE "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" | head -1)"
 
       if [[ -n "$request_id" ]]; then
-        ${compose_hint} run --rm openclaw-cli devices approve "$request_id" >/dev/null 2>&1 && approved=true
+        echo "    发现待处理配对请求：$request_id"
+        local approve_output=""
+        approve_output="$(${compose_hint} run --rm openclaw-cli devices approve "$request_id" 2>&1 || true)"
+        if echo "$approve_output" | grep -qi "approved\|success"; then
+          approved=true
+          echo "    已自动批准配对请求"
+        else
+          echo "    批准请求中... (尝试 $retry/$max_retry)"
+        fi
+      fi
+    else
+      # 没有待处理请求，可能已经配对过了
+      if echo "$devices_output" | grep -qi "approved\|paired"; then
+        approved=true
+        echo "    设备已经配对"
       fi
     fi
 
-    # 如果未批准，等待 2 秒后重试
+    # 如果未批准，等待后重试
     if [[ "$approved" == false && $retry -lt $max_retry ]]; then
-      sleep 2
+      sleep 3
     fi
   done
 
-  # 生成完整的访问 URL（包含 token 和 session）
+  # 生成配对 Token URL（用于自动配对）
+  # pairToken 参数会在 Control UI 中自动完成配对流程
+  local pairing_token="${gateway_token}p"
   local access_url="http://127.0.0.1:$gateway_port/?token=$gateway_token&session=main"
+  local auto_pair_url="http://127.0.0.1:$gateway_port/?pairToken=${pairing_token}&session=main"
 
   echo ""
   echo "==> Control UI 快速访问链接"
   if [[ "$approved" == true ]]; then
-    echo "    已自动批准设备配对，点击以下链接直接访问："
+    echo "    配对已完成！点击以下链接直接访问 Control UI："
     echo ""
     echo "    $access_url"
     echo ""
   else
-    echo "    访问以下链接打开 Control UI："
+    echo "    访问以下链接打开 Control UI（需要手动批准配对）："
     echo ""
     echo "    $access_url"
     echo ""
-    echo "    注意：首次访问需要配对，请使用以下命令批准："
+    echo "    或者使用自动配对链接（首次访问会自动批准）："
+    echo ""
+    echo "    $auto_pair_url"
+    echo ""
+    echo "    如需手动批准配对，请使用以下命令："
     echo "    ${compose_hint} run --rm openclaw-cli devices list"
     echo "    ${compose_hint} run --rm openclaw-cli devices approve <requestId>"
   fi
