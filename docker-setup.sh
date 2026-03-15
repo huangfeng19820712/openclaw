@@ -897,7 +897,7 @@ echo "Commands:"
 echo "  ${COMPOSE_HINT} logs -f openclaw-gateway"
 echo "  ${COMPOSE_HINT} exec openclaw-gateway node dist/index.js health --token \"$OPENCLAW_GATEWAY_TOKEN\""
 
-# 生成配对 URL（如果是在 NO_ONBOARD 模式下）
-if [[ "$NO_ONBOARD" == "true" ]]; then
-  generate_pairing_url "$OPENCLAW_GATEWAY_PORT" "$OPENCLAW_GATEWAY_TOKEN" "$OPENCLAW_CONFIG_DIR" "$COMPOSE_HINT"
-fi
+# 在网关启动后自动批准设备配对请求（所有模式都执行）
+echo ""
+echo "==> Auto-approve device pairing"
+generate_pairing_url "$OPENCLAW_GATEWAY_PORT" "$OPENCLAW_GATEWAY_TOKEN" "$OPENCLAW_CONFIG_DIR" "$COMPOSE_HINT"
