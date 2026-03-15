@@ -1,0 +1,7 @@
+# OpenClaw CLI alias
+alias openclaw='node /app/dist/index.js'
+
+# Load default bashrc if exists
+if [[ -f /etc/bash.bashrc ]]; then
+  source /etc/bash.bashrc
+fi

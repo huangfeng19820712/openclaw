@@ -422,8 +422,14 @@ fi
 # 自定义目录模式下显示提示
 if [[ "$CUSTOM_DIR" == true ]]; then
   info "自定义目录模式"
-  info "  配置目录：$OPENCLAW_CONFIG_DIR"
-  info "  工作空间：$OPENCLAW_WORKSPACE_DIR"
+  info "  配置目录：${OPENCLAW_CONFIG_DIR:-N/A}"
+  # 工作空间目录可能是从 OPENCLAW_CONFIG_DIR 派生的
+  if [[ -n "${OPENCLAW_WORKSPACE_DIR:-}" ]]; then
+    info "  工作空间：${OPENCLAW_WORKSPACE_DIR}"
+  else
+    # 从配置目录派生工作空间目录
+    info "  工作空间：${OPENCLAW_CONFIG_DIR}/workspace"
+  fi
 else
   # 检查实例是否存在
   if ! instance_exists "$INSTANCE_ID"; then

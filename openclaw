@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# =============================================================================
+# OpenClaw CLI 包装脚本
+# =============================================================================
+# 用法:
+#   ./openclaw <command> [args...]
+#
+# 示例:
+#   ./openclaw config list
+#   ./openclaw devices list
+#   ./openclaw channels login
+#
+# 注意:
+#   需要设置 INSTANCE_ID 或使用默认值
+# =============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE_ID="${OPENCLAW_INSTANCE_ID:-default}"
+COMPOSE_PROJECT_NAME="openclaw-${INSTANCE_ID}"
+
+# 显示帮助
+show_help() {
+  cat <<EOF
+OpenClaw CLI 包装脚本
+
+用法:
+  $0 <command> [args...]
+
+示例:
+  $0 config list
+  $0 devices list
+  $0 channels login
+  $0 onboard --mode local
+
+环境变量:
+  OPENCLAW_INSTANCE_ID   - 实例 ID，默认：default
+
+提示:
+  可以将此脚本添加到 PATH 中，方便使用：
+  ln -s $0 /usr/local/bin/openclaw
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  show_help
+  exit 0
+fi
+
+if [[ $# -lt 1 ]]; then
+  echo "Error: Missing command"
+  show_help
+  exit 1
+fi
+
+# 执行命令
+cd "$SCRIPT_DIR"
+docker compose -p "$COMPOSE_PROJECT_NAME" run --rm openclaw-cli "$@"
