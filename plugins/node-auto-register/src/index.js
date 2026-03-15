@@ -10,11 +10,11 @@ import { registerAutoPairServer } from './auto-pair-server.js';
  * 初始化自动配对服务
  * 在 plugin 加载时调用
  */
-async function initAutoPair() {
+function initAutoPair() {
   console.log('[node-auto-register] Initializing auto-pair service...');
 
   try {
-    const unregister = await registerAutoPairServer();
+    const unregister = registerAutoPairServer();
 
     if (unregister) {
       console.log('[node-auto-register] Auto-pair service registered');
@@ -38,11 +38,11 @@ async function initAutoPair() {
  * @param {any} api - Plugin SDK API
  * @returns {any} 清理函数
  */
-export async function register(api) {
+export function register(api) {
   console.log('[node-auto-register] Plugin loaded');
 
   // 初始化自动配对服务
-  const cleanupAutoPair = await initAutoPair();
+  const cleanupAutoPair = initAutoPair();
 
   // 返回清理函数
   return () => {

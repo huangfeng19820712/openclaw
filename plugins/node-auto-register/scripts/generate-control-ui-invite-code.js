@@ -72,7 +72,7 @@ function saveInviteCodes(codes) {
  */
 function generateControlUiUrl(inviteCode, gatewayPort) {
   const port = gatewayPort || 18789;
-  return `http://127.0.0.1:${port}/ui/?inviteCode=${inviteCode}&session=main`;
+  return `http://127.0.0.1:${port}/control-ui/?inviteCode=${inviteCode}&session=main`;
 }
 
 /**

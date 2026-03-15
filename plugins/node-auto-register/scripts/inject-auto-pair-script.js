@@ -34,6 +34,7 @@ function getControlUiIndexPath() {
     path.join(__dirname, '..', '..', 'ui', 'dist', 'index.html'),
     path.join(__dirname, '..', '..', 'dist', 'ui', 'index.html'),
     // 容器内路径 (Docker 构建后的 UI 输出目录)
+    '/app/dist/control-ui/index.html',
     '/app/dist/ui/index.html',
     // 用户主目录 (运行时配置目录)
     path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw', 'ui', 'index.html'),

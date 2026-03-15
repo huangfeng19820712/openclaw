@@ -943,7 +943,13 @@ fi
 
 # 2. 注入自动配对脚本到 Control UI
 echo "    Injecting auto-pair script to Control UI..."
-INJECT_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
+
+# 等待网关服务启动
+echo "    Waiting for gateway to start..."
+sleep 3
+
+# 在运行中的容器内执行注入脚本
+INJECT_OUTPUT="$(docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
 
 if echo "$INJECT_OUTPUT" | grep -qi "injected\|already"; then
   echo "    Auto-pair script injected successfully"

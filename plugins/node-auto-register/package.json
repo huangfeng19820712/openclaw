@@ -19,5 +19,9 @@
   "dependencies": {
     "ws": "^8.14.0",
     "commander": "^11.1.0"
+  },
+  "openclaw": {
+    "id": "node-auto-register",
+    "entry": "src/index.js"
   }
 }

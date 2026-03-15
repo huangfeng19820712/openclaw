@@ -25,22 +25,27 @@ import { randomBytes } from 'node:crypto';
 let approveDevicePairing = null;
 let listDevicePairing = null;
 
-try {
-  // 尝试从 plugin-sdk 导入
-  const devicePair = await import('openclaw/plugin-sdk/device-pair');
-  approveDevicePairing = devicePair.approveDevicePairing;
-  listDevicePairing = devicePair.listDevicePairing;
-} catch (err) {
-  // 在非 plugin 环境中，尝试直接从源文件导入
+function initDevicePairing() {
   try {
-    const infraPath = path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw', 'dist', 'infra', 'device-pairing.js');
-    const infra = await import(infraPath);
-    approveDevicePairing = infra.approveDevicePairing;
-    listDevicePairing = infra.listDevicePairing;
-  } catch (err2) {
-    console.warn('[auto-pair] Could not import device-pairing functions:', err2.message);
+    // 尝试从 plugin-sdk 导入
+    const devicePair = require('openclaw/plugin-sdk/device-pair');
+    approveDevicePairing = devicePair.approveDevicePairing;
+    listDevicePairing = devicePair.listDevicePairing;
+  } catch (err) {
+    // 在非 plugin 环境中，尝试直接从源文件导入
+    try {
+      const infraPath = path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw', 'dist', 'infra', 'device-pairing.js');
+      const infra = require(infraPath);
+      approveDevicePairing = infra.approveDevicePairing;
+      listDevicePairing = infra.listDevicePairing;
+    } catch (err2) {
+      console.warn('[auto-pair] Could not import device-pairing functions:', err2.message);
+    }
   }
 }
+
+// 初始化 device pairing 函数
+initDevicePairing();
 
 /**
  * 获取邀请码文件路径
@@ -196,12 +201,12 @@ async function handleAutoPair(req, res) {
 /**
  * 注册自动配对 HTTP 路由
  */
-export async function registerAutoPairServer() {
+export function registerAutoPairServer() {
   // 尝试注册 HTTP 路由
   let registerPluginHttpRoute = null;
 
   try {
-    const pluginSdk = await import('openclaw/plugin-sdk');
+    const pluginSdk = require('openclaw/plugin-sdk');
     registerPluginHttpRoute = pluginSdk.registerPluginHttpRoute;
   } catch (err) {
     console.warn('[auto-pair] Could not import registerPluginHttpRoute:', err.message);

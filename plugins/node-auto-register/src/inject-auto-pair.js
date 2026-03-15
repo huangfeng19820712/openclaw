@@ -9,7 +9,7 @@
  * 3. 配对成功后清理 URL 参数并刷新页面
  *
  * 使用方式:
- * 访问 URL: http://gateway:18789/ui/?inviteCode=xxx&session=main
+ * 访问 URL: http://gateway:18789/control-ui/?inviteCode=xxx&session=main
  */
 
 (function() {
