@@ -9,6 +9,51 @@
 - **只需一个端口** - 仅需开放 Gateway 端口 (18789)
 - **自动重连机制** - 网络断开自动恢复
 - **心跳保活** - 保持长连接稳定
+- **Control UI 自动配对** - 浏览器访问时自动完成设备配对
+
+---
+
+## Control UI 自动配对 🎉
+
+### 快速使用
+
+1. **部署时自动生成邀请码**
+
+   运行 `docker-setup.sh` 后，脚本会自动生成 Control UI 专用邀请码并注入自动配对脚本。
+
+2. **访问 Control UI**
+
+   点击部署完成后显示的 URL，例如：
+   ```
+   http://127.0.0.1:18789/ui/?inviteCode=xxx&session=main
+   ```
+
+3. **自动配对成功**
+
+   首次访问时会自动批准设备配对，无需手动执行 `devices approve` 命令。
+
+### 手动生成邀请码
+
+```bash
+# 进入容器
+docker exec -it openclaw-container bash
+
+# 生成 Control UI 邀请码
+node /data/openclaw/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui
+```
+
+### 管理邀请码
+
+```bash
+# 列出所有邀请码
+node /data/openclaw/plugins/node-auto-register/scripts/manage-invite-codes.js list
+
+# 撤销邀请码
+node /data/openclaw/plugins/node-auto-register/scripts/manage-invite-codes.js revoke <code-name>
+
+# 清理过期邀请码
+node /data/openclaw/plugins/node-auto-register/scripts/manage-invite-codes.js cleanup
+```
 
 ---
 

@@ -897,7 +897,76 @@ echo "Commands:"
 echo "  ${COMPOSE_HINT} logs -f openclaw-gateway"
 echo "  ${COMPOSE_HINT} exec openclaw-gateway node dist/index.js health --token \"$OPENCLAW_GATEWAY_TOKEN\""
 
-# 在网关启动后自动批准设备配对请求（所有模式都执行）
+# =============================================================================
+# Control UI 自动配对功能（使用邀请码）
+# =============================================================================
+# 功能说明：
+#   1. 生成 Control UI 专用邀请码
+#   2. 将自动配对脚本注入到 Control UI
+#   3. 用户访问时带上 inviteCode 参数即可自动配对
+#
+# 使用方式：
+#   访问 URL: http://127.0.0.1:PORT/ui/?inviteCode=xxx&session=main
+# =============================================================================
+
 echo ""
-echo "==> Auto-approve device pairing"
-generate_pairing_url "$OPENCLAW_GATEWAY_PORT" "$OPENCLAW_GATEWAY_TOKEN" "$OPENCLAW_CONFIG_DIR" "$COMPOSE_HINT"
+echo "==> Control UI Auto-Pair Setup"
+
+# 等待网关完全启动
+sleep 3
+
+# 1. 生成 Control UI 专用邀请码
+echo "    Generating Control UI invite code..."
+CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /data/openclaw/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui 2>&1 || true)"
+
+# 提取邀请码和访问 URL
+CONTROL_UI_INVITE_CODE=""
+CONTROL_UI_ACCESS_URL=""
+
+if echo "$CONTROL_UI_INVITE_OUTPUT" | grep -q "Invite Code:"; then
+  CONTROL_UI_INVITE_CODE="$(echo "$CONTROL_UI_INVITE_OUTPUT" | grep "Invite Code:" | awk '{print $3}')"
+  echo "    Invite code generated: ${CONTROL_UI_INVITE_CODE:0:8}...${CONTROL_UI_INVITE_CODE: -8}"
+fi
+
+if echo "$CONTROL_UI_INVITE_OUTPUT" | grep -q "Access URL:"; then
+  # 获取 Access URL 下一行
+  CONTROL_UI_ACCESS_URL="$(echo "$CONTROL_UI_INVITE_OUTPUT" | grep -A1 "Access URL:" | tail -1 | xargs)"
+fi
+
+# 2. 注入自动配对脚本到 Control UI
+echo "    Injecting auto-pair script to Control UI..."
+INJECT_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /data/openclaw/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
+
+if echo "$INJECT_OUTPUT" | grep -qi "injected\|already"; then
+  echo "    Auto-pair script injected successfully"
+else
+  echo "    Warning: Could not inject auto-pair script"
+  echo "    $INJECT_OUTPUT"
+fi
+
+# 3. 输出访问信息
+echo ""
+echo "==> Control UI Access"
+
+if [[ -n "$CONTROL_UI_ACCESS_URL" ]]; then
+  # 替换 localhost 为 127.0.0.1:PORT
+  access_url_display="http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/ui/?inviteCode=${CONTROL_UI_INVITE_CODE}&session=main"
+
+  echo "    Control UI is ready!"
+  echo ""
+  echo "    Auto-Pair URL (recommended):"
+  echo "    $access_url_display"
+  echo ""
+  echo "    Click the URL above to access Control UI with automatic device pairing."
+  echo ""
+else
+  echo "    Control UI URL:"
+  echo "    http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/ui/?session=main"
+  echo ""
+  echo "    Note: Auto-pair setup may have failed. Device pairing may require manual approval."
+  echo ""
+fi
+
+echo "    Manage invite codes:"
+echo "    ${COMPOSE_HINT} run --rm openclaw-cli node /data/openclaw/plugins/node-auto-register/scripts/manage-invite-codes.js list"
+echo ""

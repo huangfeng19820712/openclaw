@@ -1,0 +1,191 @@
+#!/usr/bin/env node
+
+/**
+ * OpenClaw Control UI Auto-Pair Script Injector
+ *
+ * 将自动配对脚本注入到 Control UI 的 index.html 中
+ *
+ * 用法:
+ *   node scripts/inject-auto-pair-script.js [inject|remove]
+ *
+ * 环境变量:
+ *   OPENCLAW_CONTROL_UI_ROOT - Control UI 根目录
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/**
+ * 获取 Control UI index.html 路径
+ */
+function getControlUiIndexPath() {
+  // 优先使用环境变量
+  if (process.env.OPENCLAW_CONTROL_UI_ROOT) {
+    return path.join(process.env.OPENCLAW_CONTROL_UI_ROOT, 'index.html');
+  }
+
+  // 尝试常见路径
+  const possiblePaths = [
+    // 开发环境
+    path.join(__dirname, '..', '..', 'ui', 'dist', 'index.html'),
+    path.join(__dirname, '..', '..', 'dist', 'ui', 'index.html'),
+    // 容器内路径
+    '/app/dist/ui/index.html',
+    '/data/openclaw/ui/dist/index.html',
+    // 用户主目录
+    path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw', 'ui', 'index.html'),
+  ];
+
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 获取自动配对脚本内容
+ */
+function getAutoPairScript() {
+  const scriptPath = path.join(__dirname, '..', 'src', 'inject-auto-pair.js');
+
+  if (fs.existsSync(scriptPath)) {
+    return fs.readFileSync(scriptPath, 'utf-8');
+  }
+
+  // 尝试容器内路径
+  const containerPath = '/data/openclaw/plugins/node-auto-register/src/inject-auto-pair.js';
+  if (fs.existsSync(containerPath)) {
+    return fs.readFileSync(containerPath, 'utf-8');
+  }
+
+  return null;
+}
+
+/**
+ * 注入脚本到 index.html
+ */
+function injectScript(indexPath, scriptContent) {
+  if (!fs.existsSync(indexPath)) {
+    console.error('Error: index.html not found at', indexPath);
+    return false;
+  }
+
+  let html = fs.readFileSync(indexPath, 'utf-8');
+
+  // 检查是否已经注入
+  if (html.includes('openclaw-auto-pair') || html.includes('OPENCLAW_AUTO_PAIR_EXECUTED')) {
+    console.log('Auto-pair script already injected');
+    return true;
+  }
+
+  // 在 </head> 之前注入
+  const scriptTag = `<script>\n${scriptContent}\n</script>\n`;
+  const injectionPoint = '</head>';
+  const injectedHtml = html.replace(injectionPoint, scriptTag + injectionPoint);
+
+  // 写回文件
+  fs.writeFileSync(indexPath, injectedHtml, 'utf-8');
+
+  console.log('Auto-pair script injected to', indexPath);
+  return true;
+}
+
+/**
+ * 从 index.html 移除脚本
+ */
+function removeScript(indexPath) {
+  if (!fs.existsSync(indexPath)) {
+    console.error('Error: index.html not found at', indexPath);
+    return false;
+  }
+
+  let html = fs.readFileSync(indexPath, 'utf-8');
+
+  // 移除注入的脚本
+  const scriptStart = '<script>\n/**\n * OpenClaw Control UI Auto-Pair Script';
+  const scriptEnd = '})();\n</script>\n';
+
+  const startIndex = html.indexOf(scriptStart);
+  if (startIndex === -1) {
+    console.log('Auto-pair script not found in', indexPath);
+    return true;
+  }
+
+  const endIndex = html.indexOf(scriptEnd, startIndex);
+  if (endIndex === -1) {
+    console.error('Error: Could not find end of injected script');
+    return false;
+  }
+
+  const cleanHtml = html.substring(0, startIndex) + html.substring(endIndex + scriptEnd.length);
+  fs.writeFileSync(indexPath, cleanHtml, 'utf-8');
+
+  console.log('Auto-pair script removed from', indexPath);
+  return true;
+}
+
+/**
+ * 主函数
+ */
+function main() {
+  const command = process.argv[2] || 'inject';
+
+  if (command === 'inject') {
+    const indexPath = getControlUiIndexPath();
+
+    if (!indexPath) {
+      console.error('Error: Could not find Control UI index.html');
+      console.error('Set OPENCLAW_CONTROL_UI_ROOT environment variable or run from the plugin directory');
+      process.exit(1);
+    }
+
+    const scriptContent = getAutoPairScript();
+
+    if (!scriptContent) {
+      console.error('Error: Could not find auto-pair script');
+      process.exit(1);
+    }
+
+    const success = injectScript(indexPath, scriptContent);
+
+    if (!success) {
+      process.exit(1);
+    }
+
+    console.log('Done! Control UI will now support auto-pair with inviteCode parameter');
+  } else if (command === 'remove') {
+    const indexPath = getControlUiIndexPath();
+
+    if (!indexPath) {
+      console.error('Error: Could not find Control UI index.html');
+      process.exit(1);
+    }
+
+    const success = removeScript(indexPath);
+
+    if (!success) {
+      process.exit(1);
+    }
+
+    console.log('Done! Auto-pair script removed');
+  } else {
+    console.log('OpenClaw Control UI Auto-Pair Script Injector');
+    console.log();
+    console.log('Usage:');
+    console.log('  node inject-auto-pair-script.js inject   - Inject auto-pair script');
+    console.log('  node inject-auto-pair-script.js remove   - Remove auto-pair script');
+    console.log();
+    console.log('Environment:');
+    console.log('  OPENCLAW_CONTROL_UI_ROOT - Control UI root directory');
+    console.log();
+  }
+}
+
+main();
