@@ -33,14 +33,26 @@ function getControlUiIndexPath() {
     // 开发环境
     path.join(__dirname, '..', '..', 'ui', 'dist', 'index.html'),
     path.join(__dirname, '..', '..', 'dist', 'ui', 'index.html'),
-    // 容器内路径
+    // 容器内路径 (Docker 构建后的 UI 输出目录)
     '/app/dist/ui/index.html',
-    '/data/openclaw/ui/dist/index.html',
-    // 用户主目录
+    // 用户主目录 (运行时配置目录)
     path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw', 'ui', 'index.html'),
+    '/home/node/.openclaw/ui/index.html',
   ];
 
   for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  // 如果都找不到，尝试从 workspace 查找（开发环境）
+  const workspacePaths = [
+    path.join(__dirname, '..', '..', '..', '..', '.openclaw', 'ui', 'index.html'),
+    '/home/node/.openclaw/workspace/ui/dist/index.html',
+  ];
+
+  for (const p of workspacePaths) {
     if (fs.existsSync(p)) {
       return p;
     }
@@ -60,7 +72,7 @@ function getAutoPairScript() {
   }
 
   // 尝试容器内路径
-  const containerPath = '/data/openclaw/plugins/node-auto-register/src/inject-auto-pair.js';
+  const containerPath = '/home/node/.openclaw/workspace/plugins/node-auto-register/src/inject-auto-pair.js';
   if (fs.existsSync(containerPath)) {
     return fs.readFileSync(containerPath, 'utf-8');
   }

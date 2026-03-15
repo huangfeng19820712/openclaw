@@ -915,9 +915,17 @@ echo "==> Control UI Auto-Pair Setup"
 # 等待网关完全启动
 sleep 3
 
+# 0. 复制插件到 workspace 目录（如果不存在）
+PLUGIN_WORKSPACE_DIR="$OPENCLAW_WORKSPACE_DIR/plugins/node-auto-register"
+if [ ! -d "$PLUGIN_WORKSPACE_DIR" ]; then
+  echo "    Copying plugin to workspace directory..."
+  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
+  cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
+fi
+
 # 1. 生成 Control UI 专用邀请码
 echo "    Generating Control UI invite code..."
-CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /data/openclaw/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui 2>&1 || true)"
+CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui 2>&1 || true)"
 
 # 提取邀请码和访问 URL
 CONTROL_UI_INVITE_CODE=""
@@ -935,7 +943,7 @@ fi
 
 # 2. 注入自动配对脚本到 Control UI
 echo "    Injecting auto-pair script to Control UI..."
-INJECT_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /data/openclaw/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
+INJECT_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
 
 if echo "$INJECT_OUTPUT" | grep -qi "injected\|already"; then
   echo "    Auto-pair script injected successfully"
@@ -968,5 +976,5 @@ else
 fi
 
 echo "    Manage invite codes:"
-echo "    ${COMPOSE_HINT} run --rm openclaw-cli node /data/openclaw/plugins/node-auto-register/scripts/manage-invite-codes.js list"
+echo "    ${COMPOSE_HINT} run --rm openclaw-cli node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/manage-invite-codes.js list"
 echo ""
