@@ -826,7 +826,9 @@ generate_pairing_url() {
 
   # 尝试自动批准配对请求
   local pending_count=""
-  pending_count="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -c "Pending" || echo "0")"
+  pending_count="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -c "Pending" || true)"
+  pending_count="${pending_count//[^0-9]/}"
+  pending_count="${pending_count:-0}"
 
   if [[ "$pending_count" -gt 0 ]]; then
     # 有待处理的请求，尝试批准最新的
