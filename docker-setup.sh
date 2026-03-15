@@ -212,9 +212,14 @@ ensure_control_ui_allowed_origins() {
   )"
   current_allowed_origins="${current_allowed_origins//$'\r'/}"
 
+  # 检查当前配置是否包含正确的端口，如果不包含则更新
+  local expected_origin="http://localhost:$OPENCLAW_GATEWAY_PORT"
   if [[ -n "$current_allowed_origins" && "$current_allowed_origins" != "null" && "$current_allowed_origins" != "[]" ]]; then
-    echo "Control UI allowlist already configured; leaving gateway.controlUi.allowedOrigins unchanged."
-    return 0
+    if [[ "$current_allowed_origins" == *"$expected_origin"* ]]; then
+      echo "Control UI allowlist already configured; leaving gateway.controlUi.allowedOrigins unchanged."
+      return 0
+    fi
+    echo "Control UI allowlist port mismatch, updating from $current_allowed_origins to $allowed_origin_json"
   fi
 
   docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
