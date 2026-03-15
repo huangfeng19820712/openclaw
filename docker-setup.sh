@@ -179,9 +179,24 @@ ensure_control_ui_allowed_origins() {
     return 0
   fi
 
+  # 获取主机 IP 地址
+  local host_ip=""
+  if command -v hostname >/dev/null 2>&1; then
+    host_ip="$(hostname -I | awk '{print $1}' 2>/dev/null || hostname 2>/dev/null || echo "")"
+  fi
+
+  # 构建 allowedOrigins 列表
+  local allowed_origins=()
+  allowed_origins+=("http://localhost:$OPENCLAW_GATEWAY_PORT")
+  allowed_origins+=("http://127.0.0.1:$OPENCLAW_GATEWAY_PORT")
+  if [[ -n "$host_ip" && "$host_ip" != "127.0.0.1" && "$host_ip" != "localhost" ]]; then
+    allowed_origins+=("http://$host_ip:$OPENCLAW_GATEWAY_PORT")
+  fi
+
   local allowed_origin_json
+  allowed_origin_json="$(printf '%s\n' "${allowed_origins[@]}" | jq -R . | jq -s .)"
+
   local current_allowed_origins
-  allowed_origin_json="$(printf '["http://127.0.0.1:%s"]' "$OPENCLAW_GATEWAY_PORT")"
   current_allowed_origins="$(
     docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
       config get gateway.controlUi.allowedOrigins 2>/dev/null || true
@@ -194,7 +209,7 @@ ensure_control_ui_allowed_origins() {
   fi
 
   docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-    config set gateway.controlUi.allowedOrigins "$allowed_origin_json" --strict-json >/dev/null
+    config set gateway.controlUi.allowedOrigins "$allowed_origin_json" >/dev/null
   echo "Set gateway.controlUi.allowedOrigins to $allowed_origin_json for non-loopback bind."
 }
 
