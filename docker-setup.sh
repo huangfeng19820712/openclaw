@@ -809,63 +809,57 @@ generate_pairing_url() {
   local config_dir="$3"
   local compose_hint="$4"
 
-  # 等待 3 秒让网关完全启动
-  sleep 3
-
-  # 尝试自动批准来自 localhost 的配对请求
-  local approved=false
-  local pair_url=""
-  local pair_token=""
-
-  # 生成一次性配对令牌
-  if command -v node >/dev/null 2>&1; then
-    pair_token="$(node -e 'console.log(require("crypto").randomBytes(16).toString("hex"))')"
-  else
-    pair_token="$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | xxd -p)"
-  fi
-
-  # 将配对令牌写入临时文件
-  local pair_file="$config_dir/.pair_token"
-  echo "$pair_token:$gateway_token" > "$pair_file"
-  chmod 600 "$pair_file"
+  # 等待 5 秒让网关完全启动并接收配对请求
+  sleep 5
 
   # 尝试自动批准配对请求
-  local pending_count=""
-  pending_count="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -c "Pending" || true)"
-  pending_count="${pending_count//[^0-9]/}"
-  pending_count="${pending_count:-0}"
+  local approved=false
+  local retry=0
+  local max_retry=3
 
-  if [[ "$pending_count" -gt 0 ]]; then
-    # 有待处理的请求，尝试批准最新的
-    local request_id=""
-    request_id="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -oE "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" | head -1)"
+  while [[ $retry -lt $max_retry && "$approved" == false ]]; do
+    retry=$((retry + 1))
 
-    if [[ -n "$request_id" ]]; then
-      ${compose_hint} run --rm openclaw-cli devices approve "$request_id" >/dev/null 2>&1 && approved=true
+    # 检查是否有待处理的配对请求
+    local pending_count=""
+    pending_count="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -c "Pending" || true)"
+    pending_count="${pending_count//[^0-9]/}"
+    pending_count="${pending_count:-0}"
+
+    if [[ "$pending_count" -gt 0 ]]; then
+      # 有待处理的请求，获取最新的 requestId
+      local request_id=""
+      request_id="$(${compose_hint} run --rm openclaw-cli devices list 2>/dev/null | grep -oE "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" | head -1)"
+
+      if [[ -n "$request_id" ]]; then
+        ${compose_hint} run --rm openclaw-cli devices approve "$request_id" >/dev/null 2>&1 && approved=true
+      fi
     fi
-  fi
 
-  # 生成配对 URL
-  pair_url="http://127.0.0.1:$gateway_port/?pairToken=$pair_token"
+    # 如果未批准，等待 2 秒后重试
+    if [[ "$approved" == false && $retry -lt $max_retry ]]; then
+      sleep 2
+    fi
+  done
+
+  # 生成完整的访问 URL（包含 token 和 session）
+  local access_url="http://127.0.0.1:$gateway_port/?token=$gateway_token&session=main"
 
   echo ""
-  echo "==> Control UI 快速访问（配对信息）"
+  echo "==> Control UI 快速访问链接"
   if [[ "$approved" == true ]]; then
-    echo "    已自动批准设备配对，可直接访问："
+    echo "    已自动批准设备配对，点击以下链接直接访问："
     echo ""
-    echo "    $pair_url"
+    echo "    $access_url"
     echo ""
-    echo "    Token: $gateway_token"
   else
-    echo "    首次访问需要配对，请使用以下方式之一："
+    echo "    访问以下链接打开 Control UI："
     echo ""
-    echo "    1. 访问 Control UI 后，在设置中输入 Token："
-    echo "       $pair_url"
-    echo "       Token: $gateway_token"
+    echo "    $access_url"
     echo ""
-    echo "    2. 或使用 CLI 批准配对请求："
-    echo "       ${compose_hint} run --rm openclaw-cli devices list"
-    echo "       ${compose_hint} run --rm openclaw-cli devices approve <requestId>"
+    echo "    注意：首次访问需要配对，请使用以下命令批准："
+    echo "    ${compose_hint} run --rm openclaw-cli devices list"
+    echo "    ${compose_hint} run --rm openclaw-cli devices approve <requestId>"
   fi
 }
 
