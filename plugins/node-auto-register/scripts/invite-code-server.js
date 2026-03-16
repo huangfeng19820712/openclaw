@@ -63,22 +63,39 @@ function saveInviteCodes(codes) {
  * 验证邀请码
  */
 function verifyInviteCode(inviteCode) {
+  console.log('[invite-server] Verifying invite code:', inviteCode ? inviteCode.substring(0, 8) + '...' : '(empty)');
   const codes = loadInviteCodes();
   const now = Date.now();
 
+  console.log('[invite-server] Loaded invite codes from:', getInviteCodeFilePath());
+  console.log('[invite-server] Found', Object.keys(codes).length, 'invite code(s)');
+
   for (const [name, data] of Object.entries(codes)) {
-    if (!data.active) continue;
-    if (data.code !== inviteCode) continue;
+    if (!data.active) {
+      console.log('[invite-server] Code "', name, '" skipped: not active');
+      continue;
+    }
+    if (data.code !== inviteCode) {
+      continue;
+    }
     if (data.expiresAt < now) {
+      console.log('[invite-server] Code "', name, '" failed: expired at', new Date(data.expiresAt).toISOString());
       return { valid: false, reason: 'expired' };
     }
     if (data.usedCount >= data.maxUses) {
+      console.log('[invite-server] Code "', name, '" failed: max uses reached', data.usedCount, '/', data.maxUses);
       return { valid: false, reason: 'max_uses_reached' };
     }
+
+    console.log('[invite-server] Code "', name, '" validation successful');
+    console.log('[invite-server]   - Expires:', new Date(data.expiresAt).toISOString());
+    console.log('[invite-server]   - Max uses:', data.maxUses);
+    console.log('[invite-server]   - Current uses:', data.usedCount);
 
     // 验证通过，增加使用次数
     data.usedCount++;
     saveInviteCodes(codes);
+    console.log('[invite-server] Invite code usage incremented:', name, '->', data.usedCount);
 
     return {
       valid: true,
@@ -87,6 +104,7 @@ function verifyInviteCode(inviteCode) {
     };
   }
 
+  console.log('[invite-server] No matching valid invite code found');
   return { valid: false, reason: 'invalid_code' };
 }
 
@@ -94,6 +112,10 @@ function verifyInviteCode(inviteCode) {
  * 调用 Gateway API 批准配对
  */
 async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
+  console.log('[invite-server] Approving node pairing via gateway:', gatewayUrl);
+  console.log('[invite-server]   - nodeId:', nodeId);
+  console.log('[invite-server]   - displayName:', nodeInfo?.displayName || '(none)');
+
   const url = new URL('/rpc', gatewayUrl);
 
   const payload = {
@@ -115,6 +137,7 @@ async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
   };
 
   try {
+    console.log('[invite-server] Fetching pending pairing requests from gateway...');
     // 获取 pending 请求列表
     const listResponse = await fetch(gatewayUrl, {
       method: 'POST',
@@ -123,12 +146,16 @@ async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
     });
 
     const listResult = await listResponse.json();
+    console.log('[invite-server] Gateway response:', JSON.stringify(listResult, null, 2).substring(0, 500));
     const pending = listResult.result?.pending || [];
+
+    console.log('[invite-server] Found', pending.length, 'pending pairing request(s)');
 
     // 查找匹配的节点
     const pendingRequest = pending.find(p => p.nodeId === nodeId);
 
     if (!pendingRequest) {
+      console.log('[invite-server] No pending request found for nodeId:', nodeId);
       // 如果没有 pending 请求，先创建一个新的
       const requestPayload = {
         jsonrpc: '2.0',
@@ -144,6 +171,7 @@ async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
         },
       };
 
+      console.log('[invite-server] Creating new pairing request...');
       await fetch(gatewayUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -152,6 +180,7 @@ async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
     }
 
     // 再次获取 pending 列表
+    console.log('[invite-server] Refreshing pending pairing requests...');
     const listResponse2 = await fetch(gatewayUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -163,8 +192,12 @@ async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
     const requestToUpdate = pending2.find(p => p.nodeId === nodeId);
 
     if (!requestToUpdate) {
+      console.log('[invite-server] Failed to get pairing request after creation');
       return { ok: false, error: 'Could not create pairing request' };
     }
+
+    console.log('[invite-server] Found pending request, approving...');
+    console.log('[invite-server]   - requestId:', requestToUpdate.requestId);
 
     // 批准配对
     const approvePayload = {
@@ -183,10 +216,11 @@ async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
     });
 
     const approveResult = await approveResponse.json();
+    console.log('[invite-server] Pairing approval result:', JSON.stringify(approveResult, null, 2).substring(0, 500));
     return approveResult;
 
   } catch (err) {
-    console.error('[ERROR] Approve pairing failed:', err.message);
+    console.error('[invite-server] Approve pairing failed:', err.message);
     return { ok: false, error: err.message };
   }
 }
@@ -197,12 +231,17 @@ async function approveNodePairing(gatewayUrl, nodeId, nodeInfo) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
+  console.log('[invite-server] === Request received ===');
+  console.log('[invite-server] Method:', req.method);
+  console.log('[invite-server] Path:', url.pathname);
+
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
+    console.log('[invite-server] CORS preflight request, returning 200');
     res.writeHead(200);
     res.end();
     return;
@@ -210,6 +249,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /health - 健康检查
   if (req.method === 'GET' && url.pathname === '/health') {
+    console.log('[invite-server] Health check request');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
     return;
@@ -217,6 +257,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /codes - 列出所有邀请码
   if (req.method === 'GET' && url.pathname === '/codes') {
+    console.log('[invite-server] Listing invite codes');
     const codes = loadInviteCodes();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(codes));
@@ -225,14 +266,22 @@ const server = http.createServer(async (req, res) => {
 
   // POST /verify - 验证邀请码并批准配对
   if (req.method === 'POST' && url.pathname === '/verify') {
+    console.log('[invite-server] Verify request received');
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
+        console.log('[invite-server] Request body:', body.substring(0, 200));
         const data = JSON.parse(body);
         const { inviteCode, nodeId, nodeInfo, gatewayUrl } = data;
 
+        console.log('[invite-server] Parameters:');
+        console.log('[invite-server]   - inviteCode:', inviteCode ? inviteCode.substring(0, 8) + '...' : '(missing)');
+        console.log('[invite-server]   - nodeId:', nodeId || '(missing)');
+        console.log('[invite-server]   - gatewayUrl:', gatewayUrl || '(missing)');
+
         if (!inviteCode || !nodeId || !gatewayUrl) {
+          console.log('[invite-server] Missing required fields');
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Missing required fields' }));
           return;
@@ -241,14 +290,19 @@ const server = http.createServer(async (req, res) => {
         // 验证邀请码
         const verification = verifyInviteCode(inviteCode);
         if (!verification.valid) {
+          console.log('[invite-server] Invite code validation failed:', verification.reason);
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Invalid invite code', reason: verification.reason }));
           return;
         }
 
+        console.log('[invite-server] Invite code validation successful, code name:', verification.codeName);
+
         // 批准配对
+        console.log('[invite-server] Starting node pairing approval...');
         const approveResult = await approveNodePairing(gatewayUrl, nodeId, nodeInfo || {});
 
+        console.log('[invite-server] Sending response...');
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
@@ -258,15 +312,18 @@ const server = http.createServer(async (req, res) => {
         }));
 
       } catch (err) {
-        console.error('[ERROR] Verify failed:', err);
+        console.error('[invite-server] Verify failed:', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
+      } finally {
+        console.log('[invite-server] === Request completed ===');
       }
     });
     return;
   }
 
   // 404
+  console.log('[invite-server] Unknown path, returning 404:', url.pathname);
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Not found' }));
 });
@@ -275,6 +332,7 @@ server.listen(PORT, () => {
   console.log('='.repeat(60));
   console.log('OpenClaw Invite Code Verification Server');
   console.log('='.repeat(60));
+  console.log('Invite code file:', getInviteCodeFilePath());
   console.log(`Server running on http://localhost:${PORT}`);
   console.log();
   console.log('Endpoints:');
