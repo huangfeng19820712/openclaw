@@ -4,16 +4,19 @@
 
 已在 `node-auto-register` 插件中添加了详细的日志信息，覆盖以下关键流程：
 
-1. **邀请码验证** - 记录邀请码加载、验证过程
-2. **配对状态更新** - 记录配对请求的获取和批准
-3. **邀请码使用次数更新** - 记录使用次数的变更
+1. **插件启动** - 记录脚本注入和 HTTP 路由注册
+2. **邀请码验证** - 记录邀请码加载、验证过程
+3. **配对状态更新** - 记录配对请求的获取和批准
+4. **邀请码使用次数更新** - 记录使用次数的变更
 
 ## 日志前缀说明
 
 | 日志前缀 | 来源文件 | 说明 |
 |----------|----------|------|
+| `[node-auto-register]` | `src/index.js` | 插件主日志（启动、注入脚本） |
 | `[auto-pair]` | `src/auto-pair-server.js` | Control UI 自动配对服务（插件内嵌） |
 | `[invite-server]` | `scripts/invite-code-server.js` | 独立邀请码验证服务 |
+| `[openclaw-auto-pair]` | `src/inject-auto-pair.js` | 前端自动配对脚本（浏览器控制台） |
 
 ---
 
@@ -32,34 +35,40 @@ docker compose logs --tail=100 openclaw-gateway
 
 # 查看特定时间后的日志
 docker compose logs --since="2026-03-16T10:00:00" openclaw-gateway
+
+# 只看插件启动和注入日志
+docker compose logs openclaw-gateway 2>&1 | grep "\[node-auto-register\]"
+
+# 只看自动配对请求日志
+docker compose logs openclaw-gateway 2>&1 | grep "\[auto-pair\]"
 ```
 
-**关键日志示例：**
+**正常启动日志示例：**
 
 ```
+[node-auto-register] Plugin loaded
+[node-auto-register] Attempting to inject auto-pair script to Control UI...
+[node-auto-register] Found Control UI index.html at: /app/dist/control-ui/index.html
+[node-auto-register] Auto-pair script already injected
+[node-auto-register] Auto-pair service registered
 [auto-pair] === Registering auto-pair server ===
 [auto-pair] Server registered at /plugins/node-auto-register/api/auto-pair
-[auto-pair] === Auto-pair request received ===
-[auto-pair] Method: GET
-[auto-pair] URL: /plugins/node-auto-register/api/auto-pair?inviteCode=abc123...
-[auto-pair] Verifying invite code: abc123...
-[auto-pair] Loaded invite codes from: /home/node/.openclaw/invite-codes.json
-[auto-pair] Found 3 invite code(s)
-[auto-pair] Code "control-ui" validation successful
-[auto-pair]   - Expires: 2027-03-16T00:00:00.000Z
-[auto-pair]   - Max uses: 999
-[auto-pair]   - Current uses: 0
-[auto-pair] Fetching pending pairing requests...
-[auto-pair] Found 1 pending pairing request(s)
-[auto-pair] Approving pending request:
-[auto-pair]   - requestId: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-[auto-pair]   - deviceId: device-001
-[auto-pair]   - displayName: Control-UI-Session
-[auto-pair] Pairing approved successfully!
-[auto-pair]   - deviceId: device-001
-[auto-pair]   - displayName: Control-UI-Session
-[auto-pair] Incrementing invite code usage for: control-ui
-[auto-pair] Invite code usage updated: control-ui 0 -> 1
+[auto-pair] Endpoint URL: http://<gateway-host>:<gateway-port>/plugins/node-auto-register/api/auto-pair
+[auto-pair] === Auto-pair server registration complete ===
+```
+
+**如果找不到 Control UI 的日志：**
+
+```
+[node-auto-register] Plugin loaded
+[node-auto-register] Attempting to inject auto-pair script to Control UI...
+[node-auto-register] Could not find Control UI index.html - auto-pair script will not be injected
+[node-auto-register] Searched paths:
+[node-auto-register]   - /app/dist/control-ui/index.html
+[node-auto-register]   - /app/dist/ui/index.html
+[node-auto-register]   - /home/node/.openclaw/ui/index.html
+[node-auto-register] To fix: run the following command:
+[node-auto-register]   node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject
 ```
 
 ---
@@ -207,6 +216,67 @@ curl -X GET "http://localhost:18789/plugins/node-auto-register/api/auto-pair?inv
 
 # 从外部测试（确保端口暴露）
 curl -X GET "http://localhost:18789/plugins/node-auto-register/api/auto-pair?inviteCode=YOUR_CODE"
+```
+
+---
+
+## 快速问题排查
+
+### 问题 1：页面提示 "pairing required"
+
+**症状：** 访问 `http://host:port/control-ui/?inviteCode=xxx` 后提示 `pairing required`
+
+**可能原因：** 自动配对脚本没有被注入到 Control UI 页面
+
+**检查日志：**
+```bash
+docker compose logs openclaw-gateway 2>&1 | grep "\[node-auto-register\]"
+```
+
+**如果没有看到注入成功日志，手动注入：**
+```bash
+# 进入容器执行注入
+docker exec -it openclaw-container \
+  node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject
+
+# 然后重启网关容器
+docker compose restart openclaw-gateway
+
+# 或者直接刷新页面（如果脚本已注入则无需重启）
+```
+
+**验证注入是否成功：**
+```bash
+# 查看 Control UI index.html 是否包含自动配对脚本
+docker exec -it openclaw-container \
+  grep -l "openclaw-auto-pair" /app/dist/control-ui/index.html || \
+  grep -l "OPENCLAW_AUTO_PAIR_EXECUTED" /app/dist/control-ui/index.html
+```
+
+---
+
+### 问题 2：插件加载但服务未注册
+
+**症状：** 日志显示 `Plugin loaded` 但没有 `Server registered` 日志
+
+**检查日志：**
+```bash
+docker compose logs openclaw-gateway 2>&1 | grep "\[auto-pair\]"
+```
+
+**可能原因：**
+1. 插件路径配置错误
+2. 插件被禁用
+
+**解决方法：**
+```bash
+# 检查插件配置
+docker exec -it openclaw-container \
+  cat /home/node/.openclaw/openclaw.json | grep -A 10 '"plugins"'
+
+# 确保插件路径在 load.paths 中
+docker exec -it openclaw-container \
+  node -e "const c=JSON.parse(require('fs').readFileSync('/home/node/.openclaw/openclaw.json')); console.log(JSON.stringify(c.plugins?.load?.paths, null, 2))"
 ```
 
 ### 2. 查看邀请码文件
