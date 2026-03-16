@@ -21,11 +21,16 @@
 #   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true OPENCLAW_SKIP_BUILD=true ./docker-setup.sh
 #   ./docker-setup.sh --skip-build
 #
+#   # 强制覆盖 workspace 目录（开发时更新插件代码）
+#   OPENCLAW_FORCE_COPY=true ./docker-setup.sh
+#   ./docker-setup.sh --force
+#
 # 环境变量：
 #   OPENCLAW_INSTANCE_ID   - 实例标识，默认：default
 #   OPENCLAW_PORT_OFFSET   - 端口偏移量，默认：0（Gateway 端口 = 18789 + offset）
 #   OPENCLAW_NO_ONBOARD    - 是否跳过 onboarding，默认：false
 #   OPENCLAW_SKIP_BUILD    - 是否跳过镜像构建，默认：false
+#   OPENCLAW_FORCE_COPY    - 是否强制覆盖 workspace，默认：false
 #   OPENCLAW_IMAGE         - Docker 镜像名，默认：openclaw:local
 #   OPENCLAW_EXTRA_MOUNTS  - 额外挂载点，逗号分隔
 #   OPENCLAW_HOME_VOLUME   - 命名卷名称
@@ -59,6 +64,8 @@ PORT_OFFSET="${OPENCLAW_PORT_OFFSET:-0}"
 NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-false}"
 # SKIP_BUILD: 是否跳过镜像构建（多实例复用时使用）
 SKIP_BUILD="${OPENCLAW_SKIP_BUILD:-false}"
+# FORCE_COPY: 是否强制覆盖已存在的 workspace 目录
+FORCE_COPY="${OPENCLAW_FORCE_COPY:-false}"
 
 # 支持 --no-onboard 命令行参数
 if [[ "${1:-}" == "--no-onboard" ]]; then
@@ -68,6 +75,11 @@ fi
 # 支持 --skip-build 命令行参数
 if [[ "${1:-}" == "--skip-build" ]]; then
   SKIP_BUILD=true
+fi
+
+# 支持 --force 命令行参数（强制覆盖 workspace）
+if [[ "${1:-}" == "--force" ]]; then
+  FORCE_COPY=true
 fi
 
 # =============================================================================
@@ -917,7 +929,12 @@ sleep 3
 
 # 0. 复制插件到 workspace 目录（如果不存在）
 PLUGIN_WORKSPACE_DIR="$OPENCLAW_WORKSPACE_DIR/plugins/node-auto-register"
-if [ ! -d "$PLUGIN_WORKSPACE_DIR" ]; then
+if [[ "$FORCE_COPY" == "true" ]]; then
+  echo "    Forcing plugin copy (overwrite existing)..."
+  rm -rf "$PLUGIN_WORKSPACE_DIR"
+  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
+  cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
+elif [ ! -d "$PLUGIN_WORKSPACE_DIR" ]; then
   echo "    Copying plugin to workspace directory..."
   mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
   cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
