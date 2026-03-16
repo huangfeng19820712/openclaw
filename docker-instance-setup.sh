@@ -1,6 +1,46 @@
 #!/usr/bin/env bash
+# =============================================================================
+# OpenClaw Docker 部署脚本
+# =============================================================================
+# 功能：
+#   - 支持单实例快速部署
+#   - 支持多实例隔离部署（通过 INSTANCE_ID 和 PORT_OFFSET）
+#   - 支持跳过交互式 onboarding（快速启动 gateway）
+#   - 支持跳过镜像构建（多实例复用已构建镜像）
+#   - 支持 Sandbox 沙箱模式
+#
+# 使用方式：
+#   # 快速启动（无交互）
+#   OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+#   ./docker-setup.sh --no-onboard
+#
+#   # 多实例部署
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+#
+#   # 多实例部署（跳过镜像构建，复用已构建的镜像）
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true OPENCLAW_SKIP_BUILD=true ./docker-setup.sh
+#   ./docker-setup.sh --skip-build
+#
+#   # 强制覆盖 workspace 目录（开发时更新插件代码）
+#   OPENCLAW_FORCE_COPY=true ./docker-setup.sh
+#   ./docker-setup.sh --force
+#
+# 环境变量：
+#   OPENCLAW_INSTANCE_ID   - 实例标识，默认：default
+#   OPENCLAW_PORT_OFFSET   - 端口偏移量，默认：0（Gateway 端口 = 18789 + offset）
+#   OPENCLAW_NO_ONBOARD    - 是否跳过 onboarding，默认：false
+#   OPENCLAW_SKIP_BUILD    - 是否跳过镜像构建，默认：false
+#   OPENCLAW_FORCE_COPY    - 是否强制覆盖 workspace，默认：false
+#   OPENCLAW_IMAGE         - Docker 镜像名，默认：openclaw:local
+#   OPENCLAW_EXTRA_MOUNTS  - 额外挂载点，逗号分隔
+#   OPENCLAW_HOME_VOLUME   - 命名卷名称
+#   OPENCLAW_SANDBOX       - 是否启用沙箱，默认：false
+# =============================================================================
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 基础配置
+# -----------------------------------------------------------------------------
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 EXTRA_COMPOSE_FILE="$ROOT_DIR/docker-compose.extra.yml"
@@ -11,11 +51,50 @@ RAW_SANDBOX_SETTING="${OPENCLAW_SANDBOX:-}"
 SANDBOX_ENABLED=""
 DOCKER_SOCKET_PATH="${OPENCLAW_DOCKER_SOCKET:-}"
 
+# -----------------------------------------------------------------------------
+# 多实例支持配置
+# -----------------------------------------------------------------------------
+# INSTANCE_ID: 实例唯一标识，用于隔离配置目录
+INSTANCE_ID="${OPENCLAW_INSTANCE_ID:-default}"
+# PORT_OFFSET: 端口偏移量，用于多实例端口分配
+#   Gateway 端口 = 18789 + PORT_OFFSET
+#   Bridge 端口 = 18790 + PORT_OFFSET
+PORT_OFFSET="${OPENCLAW_PORT_OFFSET:-0}"
+# NO_ONBOARD: 是否跳过交互式 onboarding 配置
+NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-false}"
+# SKIP_BUILD: 是否跳过镜像构建（多实例复用时使用）
+SKIP_BUILD="${OPENCLAW_SKIP_BUILD:-false}"
+# FORCE_COPY: 是否强制覆盖已存在的 workspace 目录
+FORCE_COPY="${OPENCLAW_FORCE_COPY:-false}"
+
+# 支持 --no-onboard 命令行参数
+if [[ "${1:-}" == "--no-onboard" ]]; then
+  NO_ONBOARD=true
+fi
+
+# 支持 --skip-build 命令行参数
+if [[ "${1:-}" == "--skip-build" ]]; then
+  SKIP_BUILD=true
+fi
+
+# 支持 --force 命令行参数（强制覆盖 workspace）
+if [[ "${1:-}" == "--force" ]]; then
+  FORCE_COPY=true
+fi
+
+# =============================================================================
+# 辅助函数
+# =============================================================================
+
+# 输出错误信息并退出
+# 参数：错误消息内容
 fail() {
   echo "ERROR: $*" >&2
   exit 1
 }
 
+# 检查命令是否存在
+# 参数：命令名称
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing dependency: $1" >&2
@@ -23,6 +102,8 @@ require_cmd() {
   fi
 }
 
+# 检查值是否为真（1/true/yes/on）
+# 参数：待检查的值
 is_truthy_value() {
   local raw="${1:-}"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
@@ -32,6 +113,9 @@ is_truthy_value() {
   esac
 }
 
+# 从配置文件中读取 gateway token
+# 支持 Python3 和 Node.js 两种解析方式
+# 返回：token 字符串（如果存在）
 read_config_gateway_token() {
   local config_path="$OPENCLAW_CONFIG_DIR/openclaw.json"
   if [[ ! -f "$config_path" ]]; then
@@ -80,6 +164,9 @@ NODE
   fi
 }
 
+# 从 .env 文件中读取 gateway token
+# 参数：env_path - .env 文件路径
+# 返回：token 字符串（如果存在）
 read_env_gateway_token() {
   local env_path="$1"
   local line=""
@@ -98,30 +185,61 @@ read_env_gateway_token() {
   fi
 }
 
+# 配置 Control UI 允许的源（非 loopback 绑定需要）
 ensure_control_ui_allowed_origins() {
   if [[ "${OPENCLAW_GATEWAY_BIND}" == "loopback" ]]; then
     return 0
   fi
 
+  # 获取主机 IP 地址
+  local host_ip=""
+  if command -v hostname >/dev/null 2>&1; then
+    host_ip="$(hostname -I | awk '{print $1}' 2>/dev/null || hostname 2>/dev/null || echo "")"
+  fi
+
+  # 构建 allowedOrigins 列表
+  local allowed_origins=()
+  allowed_origins+=("http://localhost:$OPENCLAW_GATEWAY_PORT")
+  allowed_origins+=("http://127.0.0.1:$OPENCLAW_GATEWAY_PORT")
+  if [[ -n "$host_ip" && "$host_ip" != "127.0.0.1" && "$host_ip" != "localhost" ]]; then
+    allowed_origins+=("http://$host_ip:$OPENCLAW_GATEWAY_PORT")
+  fi
+
+  # 使用 node 生成 JSON 数组（避免依赖 jq）
   local allowed_origin_json
+  local origins_str=""
+  for i in "${!allowed_origins[@]}"; do
+    if [[ $i -eq 0 ]]; then
+      origins_str="\"${allowed_origins[$i]}\""
+    else
+      origins_str="$origins_str,\"${allowed_origins[$i]}\""
+    fi
+  done
+  allowed_origin_json="[$origins_str]"
+
   local current_allowed_origins
-  allowed_origin_json="$(printf '["http://127.0.0.1:%s"]' "$OPENCLAW_GATEWAY_PORT")"
   current_allowed_origins="$(
     docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
       config get gateway.controlUi.allowedOrigins 2>/dev/null || true
   )"
   current_allowed_origins="${current_allowed_origins//$'\r'/}"
 
+  # 检查当前配置是否包含正确的端口，如果不包含则更新
+  local expected_origin="http://localhost:$OPENCLAW_GATEWAY_PORT"
   if [[ -n "$current_allowed_origins" && "$current_allowed_origins" != "null" && "$current_allowed_origins" != "[]" ]]; then
-    echo "Control UI allowlist already configured; leaving gateway.controlUi.allowedOrigins unchanged."
-    return 0
+    if [[ "$current_allowed_origins" == *"$expected_origin"* ]]; then
+      echo "Control UI allowlist already configured; leaving gateway.controlUi.allowedOrigins unchanged."
+      return 0
+    fi
+    echo "Control UI allowlist port mismatch, updating from $current_allowed_origins to $allowed_origin_json"
   fi
 
   docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
-    config set gateway.controlUi.allowedOrigins "$allowed_origin_json" --strict-json >/dev/null
+    config set gateway.controlUi.allowedOrigins "$allowed_origin_json" >/dev/null
   echo "Set gateway.controlUi.allowedOrigins to $allowed_origin_json for non-loopback bind."
 }
 
+# 同步 gateway 配置：设置 mode=local 和 bind 参数
 sync_gateway_mode_and_bind() {
   docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli \
     config set gateway.mode local >/dev/null
@@ -130,11 +248,13 @@ sync_gateway_mode_and_bind() {
   echo "Pinned gateway.mode=local and gateway.bind=$OPENCLAW_GATEWAY_BIND for Docker setup."
 }
 
+# 检查字符串是否包含非法字符（换行、回车、制表符）
 contains_disallowed_chars() {
   local value="$1"
   [[ "$value" == *$'\n'* || "$value" == *$'\r'* || "$value" == *$'\t'* ]]
 }
 
+# 验证挂载路径值
 validate_mount_path_value() {
   local label="$1"
   local value="$2"
@@ -149,6 +269,7 @@ validate_mount_path_value() {
   fi
 }
 
+# 验证命名卷名称
 validate_named_volume() {
   local value="$1"
   if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
@@ -156,6 +277,7 @@ validate_named_volume() {
   fi
 }
 
+# 验证挂载规格
 validate_mount_spec() {
   local mount="$1"
   if contains_disallowed_chars "$mount"; then
@@ -168,25 +290,39 @@ validate_mount_spec() {
   fi
 }
 
+# =============================================================================
+# 依赖检查和环境初始化
+# =============================================================================
+
+# 检查 Docker 依赖
 require_cmd docker
 if ! docker compose version >/dev/null 2>&1; then
   echo "Docker Compose not available (try: docker compose version)" >&2
   exit 1
 fi
 
+# Docker Socket 路径检测
 if [[ -z "$DOCKER_SOCKET_PATH" && "${DOCKER_HOST:-}" == unix://* ]]; then
   DOCKER_SOCKET_PATH="${DOCKER_HOST#unix://}"
 fi
 if [[ -z "$DOCKER_SOCKET_PATH" ]]; then
   DOCKER_SOCKET_PATH="/var/run/docker.sock"
 fi
+
+# 解析 Sandbox 设置
 if is_truthy_value "$RAW_SANDBOX_SETTING"; then
   SANDBOX_ENABLED="1"
 fi
 
-OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
-OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}"
+# -----------------------------------------------------------------------------
+# 配置目录和环境变量（支持多实例隔离）
+# -----------------------------------------------------------------------------
+# 配置目录：~/.openclaw-${INSTANCE_ID}，每个实例独立配置
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw-${INSTANCE_ID}}"
+# 工作空间目录：~/.openclaw-${INSTANCE_ID}/workspace
+OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw-${INSTANCE_ID}/workspace}"
 
+# 验证目录路径
 validate_mount_path_value "OPENCLAW_CONFIG_DIR" "$OPENCLAW_CONFIG_DIR"
 validate_mount_path_value "OPENCLAW_WORKSPACE_DIR" "$OPENCLAW_WORKSPACE_DIR"
 if [[ -n "$HOME_VOLUME_NAME" ]]; then
@@ -203,6 +339,7 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
   validate_mount_path_value "OPENCLAW_DOCKER_SOCKET" "$DOCKER_SOCKET_PATH"
 fi
 
+# 创建必要的目录
 mkdir -p "$OPENCLAW_CONFIG_DIR"
 mkdir -p "$OPENCLAW_WORKSPACE_DIR"
 # Seed directory tree eagerly so bind mounts work even on Docker Desktop/Windows
@@ -211,10 +348,29 @@ mkdir -p "$OPENCLAW_CONFIG_DIR/identity"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/agent"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/sessions"
 
+# 创建 .bashrc 文件（用于 CLI alias）
+bashrc_file="$OPENCLAW_CONFIG_DIR/.bashrc"
+if [[ ! -f "$bashrc_file" ]]; then
+  echo "==> Creating .bashrc with openclaw CLI alias"
+  cat > "$bashrc_file" << 'BASHRC'
+# OpenClaw CLI alias
+alias openclaw='node /app/dist/index.js'
+
+# Load default bashrc if exists
+if [[ -f /etc/bash.bashrc ]]; then
+  source /etc/bash.bashrc
+fi
+BASHRC
+fi
+
+# 导出环境变量
 export OPENCLAW_CONFIG_DIR
 export OPENCLAW_WORKSPACE_DIR
-export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
-export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
+# 多实例部署：使用 INSTANCE_ID 作为项目名，避免容器名冲突
+export COMPOSE_PROJECT_NAME="openclaw-${INSTANCE_ID}"
+# 端口计算：基础端口 + 偏移量（强制重新计算，不使用已设置的值）
+export OPENCLAW_GATEWAY_PORT="$((18789 + PORT_OFFSET))"
+export OPENCLAW_BRIDGE_PORT="$((18790 + PORT_OFFSET))"
 export OPENCLAW_GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-lan}"
 export OPENCLAW_IMAGE="$IMAGE_NAME"
 export OPENCLAW_DOCKER_APT_PACKAGES="${OPENCLAW_DOCKER_APT_PACKAGES:-}"
@@ -225,7 +381,7 @@ export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:
 export OPENCLAW_SANDBOX="$SANDBOX_ENABLED"
 export OPENCLAW_DOCKER_SOCKET="$DOCKER_SOCKET_PATH"
 
-# Detect Docker socket GID for sandbox group_add.
+# 检测 Docker socket GID（用于 sandbox group_add）
 DOCKER_GID=""
 if [[ -n "$SANDBOX_ENABLED" && -S "$DOCKER_SOCKET_PATH" ]]; then
   DOCKER_GID="$(stat -c '%g' "$DOCKER_SOCKET_PATH" 2>/dev/null || stat -f '%g' "$DOCKER_SOCKET_PATH" 2>/dev/null || echo "")"
@@ -410,20 +566,37 @@ upsert_env "$ENV_FILE" \
   OPENCLAW_INSTALL_DOCKER_CLI \
   OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
 
-if [[ "$IMAGE_NAME" == "openclaw:local" ]]; then
-  echo "==> Building Docker image: $IMAGE_NAME"
-  docker build \
-    --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=${OPENCLAW_DOCKER_APT_PACKAGES}" \
-    --build-arg "OPENCLAW_EXTENSIONS=${OPENCLAW_EXTENSIONS}" \
-    --build-arg "OPENCLAW_INSTALL_DOCKER_CLI=${OPENCLAW_INSTALL_DOCKER_CLI:-}" \
-    -t "$IMAGE_NAME" \
-    -f "$ROOT_DIR/Dockerfile" \
-    "$ROOT_DIR"
-else
-  echo "==> Pulling Docker image: $IMAGE_NAME"
-  if ! docker pull "$IMAGE_NAME"; then
-    echo "ERROR: Failed to pull image $IMAGE_NAME. Please check the image name and your access permissions." >&2
+# 镜像构建/拉取逻辑
+# 如果 SKIP_BUILD=true，强制跳过；否则检查镜像是否存在
+if [[ "$SKIP_BUILD" == "true" ]]; then
+  echo "==> Skipping image build (SKIP_BUILD=true)"
+  echo "    Reusing existing image: $IMAGE_NAME"
+  if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    echo "ERROR: Image '$IMAGE_NAME' not found. Run without --skip-build first to build the image." >&2
     exit 1
+  fi
+elif docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+  # 镜像已存在，自动跳过构建（多实例部署时复用）
+  echo "==> Image already exists: $IMAGE_NAME"
+  echo "    Skipping build (reuse existing image)"
+  echo "    Hint: Set OPENCLAW_SKIP_BUILD=true to suppress this message"
+else
+  # 镜像不存在，需要构建或拉取
+  if [[ "$IMAGE_NAME" == "openclaw:local" ]]; then
+    echo "==> Building Docker image: $IMAGE_NAME"
+    docker build \
+      --build-arg "OPENCLAW_DOCKER_APT_PACKAGES=${OPENCLAW_DOCKER_APT_PACKAGES}" \
+      --build-arg "OPENCLAW_EXTENSIONS=${OPENCLAW_EXTENSIONS}" \
+      --build-arg "OPENCLAW_INSTALL_DOCKER_CLI=${OPENCLAW_INSTALL_DOCKER_CLI:-}" \
+      -t "$IMAGE_NAME" \
+      -f "$ROOT_DIR/Dockerfile" \
+      "$ROOT_DIR"
+  else
+    echo "==> Pulling Docker image: $IMAGE_NAME"
+    if ! docker pull "$IMAGE_NAME"; then
+      echo "ERROR: Failed to pull image $IMAGE_NAME. Please check the image name and your access permissions." >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -443,20 +616,76 @@ docker compose "${COMPOSE_ARGS[@]}" run --rm --user root --entrypoint sh opencla
   'find /home/node/.openclaw -xdev -exec chown node:node {} +; \
    [ -d /home/node/.openclaw/workspace/.openclaw ] && chown -R node:node /home/node/.openclaw/workspace/.openclaw || true'
 
-echo ""
-echo "==> Onboarding (interactive)"
-echo "Docker setup pins Gateway mode to local."
-echo "Gateway runtime bind comes from OPENCLAW_GATEWAY_BIND (default: lan)."
-echo "Current runtime bind: $OPENCLAW_GATEWAY_BIND"
-echo "Gateway token: $OPENCLAW_GATEWAY_TOKEN"
-echo "Tailscale exposure: Off (use host-level tailnet/Tailscale setup separately)."
-echo "Install Gateway daemon: No (managed by Docker Compose)"
-echo ""
-docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli onboard --mode local --no-install-daemon
+if [[ "$NO_ONBOARD" != "true" ]]; then
+  echo ""
+  echo "==> Onboarding (interactive)"
+  echo "Docker setup pins Gateway mode to local."
+  echo "Gateway runtime bind comes from OPENCLAW_GATEWAY_BIND (default: lan)."
+  echo "Current runtime bind: $OPENCLAW_GATEWAY_BIND"
+  echo "Gateway token: $OPENCLAW_GATEWAY_TOKEN"
+  echo "Tailscale exposure: Off (use host-level tailnet/Tailscale setup separately)."
+  echo "Install Gateway daemon: No (managed by Docker Compose)"
+  echo ""
+  docker compose "${COMPOSE_ARGS[@]}" run --rm openclaw-cli onboard --mode local --no-install-daemon
 
-echo ""
-echo "==> Docker gateway defaults"
-sync_gateway_mode_and_bind
+  echo ""
+  echo "==> Docker gateway defaults"
+  sync_gateway_mode_and_bind
+else
+  echo ""
+  echo "==> Skipping onboarding (NO_ONBOARD=true)"
+  # 自动生成 gateway token（如果未设置）
+  if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+    echo "==> Generating gateway token..."
+    if command -v node >/dev/null 2>&1; then
+      OPENCLAW_GATEWAY_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
+    else
+      # 回退方案：使用 /dev/urandom
+      OPENCLAW_GATEWAY_TOKEN="$(head -c 32 /dev/urandom | xxd -p)"
+    fi
+    export OPENCLAW_GATEWAY_TOKEN
+  fi
+  echo "Gateway token: ${OPENCLAW_GATEWAY_TOKEN}"
+
+  # 设置 gateway token 到配置（通过 CLI 或直接修改配置文件）
+  echo "==> Setting gateway token and auth mode to config..."
+  config_file="$OPENCLAW_CONFIG_DIR/openclaw.json"
+
+  # 直接修改配置文件（更可靠，不依赖 CLI 连接）
+  if [[ -f "$config_file" ]]; then
+    docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint node openclaw-cli -e "
+      const fs = require('fs');
+      const configPath = '/home/node/.openclaw/openclaw.json';
+      let config;
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      } catch (e) {
+        config = {};
+      }
+      config.gateway = config.gateway || {};
+      config.gateway.auth = config.gateway.auth || {};
+      config.gateway.auth.token = \"$OPENCLAW_GATEWAY_TOKEN\";
+      config.gateway.auth.mode = 'token';
+      config.gateway.bind = 'loopback';
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+      console.log('Config updated successfully');
+    "
+  fi
+
+  # 写入 .env 文件持久化
+  if [[ -f "$ENV_FILE" ]]; then
+    # 如果已存在，更新 token
+    if grep -q "^OPENCLAW_GATEWAY_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+      sed -i "s/^OPENCLAW_GATEWAY_TOKEN=.*/OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN/" "$ENV_FILE"
+    else
+      echo "OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN" >> "$ENV_FILE"
+    fi
+  else
+    echo "OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN" > "$ENV_FILE"
+  fi
+
+  sync_gateway_mode_and_bind
+fi
 
 echo ""
 echo "==> Control UI origin allowlist"
@@ -585,6 +814,90 @@ else
   fi
 fi
 
+# -----------------------------------------------------------------------------
+# 自动生成 Control UI 访问 URL（部署时自动完成配对）
+# -----------------------------------------------------------------------------
+# 说明：
+#   - 本脚本在网关启动后自动检查并批准待处理的设备配对请求
+#   - 配对通过 CLI 命令（devices list / devices approve）完成，无需修改源码
+#   - 输出的 URL 包含 gateway token，访问时自动使用已配对的设备身份
+# -----------------------------------------------------------------------------
+generate_pairing_url() {
+  local gateway_port="$1"
+  local gateway_token="$2"
+  local config_dir="$3"
+  local compose_hint="$4"
+
+  # 等待网关完全启动
+  sleep 8
+
+  # 尝试自动批准配对请求
+  local approved=false
+  local retry=0
+  local max_retry=5
+
+  echo ""
+  echo "==> 等待网关启动并检查配对请求..."
+
+  while [[ $retry -lt $max_retry && "$approved" == false ]]; do
+    retry=$((retry + 1))
+
+    # 检查是否有待处理的配对请求
+    local devices_output=""
+    devices_output="$(${compose_hint} run --rm openclaw-cli devices list 2>&1 || true)"
+
+    if echo "$devices_output" | grep -qi "pending"; then
+      # 有待处理的请求，获取 requestId
+      local request_id=""
+      request_id="$(echo "$devices_output" | grep -oE "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" | head -1)"
+
+      if [[ -n "$request_id" ]]; then
+        echo "    发现待处理配对请求：$request_id"
+        local approve_output=""
+        approve_output="$(${compose_hint} run --rm openclaw-cli devices approve "$request_id" 2>&1 || true)"
+        if echo "$approve_output" | grep -qi "approved\|success"; then
+          approved=true
+          echo "    已自动批准配对请求"
+        else
+          echo "    批准请求中... (尝试 $retry/$max_retry)"
+        fi
+      fi
+    else
+      # 没有待处理请求，可能已经配对过了
+      if echo "$devices_output" | grep -qi "approved\|paired"; then
+        approved=true
+        echo "    设备已经配对"
+      fi
+    fi
+
+    # 如果未批准，等待后重试
+    if [[ "$approved" == false && $retry -lt $max_retry ]]; then
+      sleep 3
+    fi
+  done
+
+  # 生成访问 URL（使用 gateway token 进行认证）
+  local access_url="http://127.0.0.1:$gateway_port/?token=$gateway_token&session=main"
+
+  echo ""
+  echo "==> Control UI 快速访问链接"
+  if [[ "$approved" == true ]]; then
+    echo "    配对已完成！点击以下链接直接访问 Control UI："
+    echo ""
+    echo "    $access_url"
+    echo ""
+  else
+    echo "    访问以下链接进入 Control UI（需手动批准配对）："
+    echo ""
+    echo "    $access_url"
+    echo ""
+    echo "    如需手动批准配对，请使用以下命令："
+    echo "    ${compose_hint} run --rm openclaw-cli devices list"
+    echo "    ${compose_hint} run --rm openclaw-cli devices approve <requestId>"
+  fi
+}
+
+# 输出完成信息
 echo ""
 echo "Gateway running with host port mapping."
 echo "Access from tailnet devices via the host's tailnet IP."
@@ -595,3 +908,115 @@ echo ""
 echo "Commands:"
 echo "  ${COMPOSE_HINT} logs -f openclaw-gateway"
 echo "  ${COMPOSE_HINT} exec openclaw-gateway node dist/index.js health --token \"$OPENCLAW_GATEWAY_TOKEN\""
+
+# =============================================================================
+# Control UI 自动配对功能（使用邀请码）
+# =============================================================================
+# 功能说明：
+#   1. 生成 Control UI 专用邀请码
+#   2. 将自动配对脚本注入到 Control UI
+#   3. 用户访问时带上 inviteCode 参数即可自动配对
+#
+# 使用方式：
+#   访问 URL: http://127.0.0.1:PORT/ui/?inviteCode=xxx&session=main
+# =============================================================================
+
+echo ""
+echo "==> Control UI Auto-Pair Setup"
+
+# 等待网关完全启动
+sleep 3
+
+# 0. 复制插件到 workspace 目录（如果不存在）
+PLUGIN_WORKSPACE_DIR="$OPENCLAW_WORKSPACE_DIR/plugins/node-auto-register"
+if [[ "$FORCE_COPY" == "true" ]]; then
+  echo "    Forcing plugin copy (overwrite existing)..."
+  rm -rf "$PLUGIN_WORKSPACE_DIR"
+  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
+  cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
+elif [ ! -d "$PLUGIN_WORKSPACE_DIR" ]; then
+  echo "    Copying plugin to workspace directory..."
+  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
+  cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
+fi
+
+# 0.5 配置插件加载路径
+echo "    Configuring plugin load path..."
+${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway -e "
+const fs = require('fs');
+const configPath = '/home/node/.openclaw/openclaw.json';
+let config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+if (!config.plugins) config.plugins = {};
+if (!config.plugins.load) config.plugins.load = {};
+if (!Array.isArray(config.plugins.load.paths)) config.plugins.load.paths = [];
+const pluginPath = '/home/node/.openclaw/workspace/plugins/node-auto-register';
+if (!config.plugins.load.paths.includes(pluginPath)) {
+  config.plugins.load.paths.push(pluginPath);
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  console.log('Plugin path added:', pluginPath);
+} else {
+  console.log('Plugin path already exists:', pluginPath);
+}
+" 2>&1 || true
+
+# 1. 生成 Control UI 专用邀请码
+echo "    Generating Control UI invite code..."
+CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui 2>&1 || true)"
+
+# 提取邀请码和访问 URL
+CONTROL_UI_INVITE_CODE=""
+CONTROL_UI_ACCESS_URL=""
+
+if echo "$CONTROL_UI_INVITE_OUTPUT" | grep -q "Invite Code:"; then
+  CONTROL_UI_INVITE_CODE="$(echo "$CONTROL_UI_INVITE_OUTPUT" | grep "Invite Code:" | awk '{print $3}')"
+  echo "    Invite code generated: ${CONTROL_UI_INVITE_CODE:0:8}...${CONTROL_UI_INVITE_CODE: -8}"
+fi
+
+if echo "$CONTROL_UI_INVITE_OUTPUT" | grep -q "Access URL:"; then
+  # 获取 Access URL 下一行
+  CONTROL_UI_ACCESS_URL="$(echo "$CONTROL_UI_INVITE_OUTPUT" | grep -A1 "Access URL:" | tail -1 | xargs)"
+fi
+
+# 2. 注入自动配对脚本到 Control UI
+echo "    Injecting auto-pair script to Control UI..."
+
+# 等待网关服务启动
+echo "    Waiting for gateway to start..."
+sleep 3
+
+# 在运行中的容器内执行注入脚本
+INJECT_OUTPUT="$(docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
+
+if echo "$INJECT_OUTPUT" | grep -qi "injected\|already"; then
+  echo "    Auto-pair script injected successfully"
+else
+  echo "    Warning: Could not inject auto-pair script"
+  echo "    $INJECT_OUTPUT"
+fi
+
+# 3. 输出访问信息
+echo ""
+echo "==> Control UI Access"
+
+if [[ -n "$CONTROL_UI_ACCESS_URL" ]]; then
+  # 使用脚本输出的完整 URL（已包含 token）
+  access_url_display="$CONTROL_UI_ACCESS_URL"
+
+  echo "    Control UI is ready!"
+  echo ""
+  echo "    Auto-Pair URL (recommended):"
+  echo "    $access_url_display"
+  echo ""
+  echo "    Click the URL above to access Control UI with automatic device pairing."
+  echo ""
+else
+  echo "    Control UI URL:"
+  echo "    http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/ui/?session=main"
+  echo ""
+  echo "    Note: Auto-pair setup may have failed. Device pairing may require manual approval."
+  echo ""
+fi
+
+echo "    Manage invite codes:"
+echo "    ${COMPOSE_HINT} run --rm openclaw-cli node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/manage-invite-codes.js list"
+echo ""
