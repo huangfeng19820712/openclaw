@@ -4,7 +4,7 @@
 # =============================================================================
 # 功能：
 #   - 支持单实例快速部署
-#   - 支持多实例隔离部署（通过 INSTANCE_ID 和 PORT_OFFSET）
+#   - 支持多实例隔离部署（通过 INSTANCE_ID）
 #   - 支持跳过交互式 onboarding（快速启动 gateway）
 #   - 支持跳过镜像构建（多实例复用已构建镜像）
 #   - 支持 Sandbox 沙箱模式
@@ -14,11 +14,14 @@
 #   OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
 #   ./docker-setup.sh --no-onboard
 #
-#   # 多实例部署
-#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+#   # 多实例部署（只需指定实例名）
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_NO_ONBOARD=true ./docker-setup.sh
+#   # 自动生成：
+#   #   OPENCLAW_CONFIG_DIR=/data/openclaw/openclaw_instances/gw1
+#   #   OPENCLAW_WORKSPACE_DIR=/data/openclaw/openclaw_instances/gw1/workspace/
 #
 #   # 多实例部署（跳过镜像构建，复用已构建的镜像）
-#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true OPENCLAW_SKIP_BUILD=true ./docker-setup.sh
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_NO_ONBOARD=true OPENCLAW_SKIP_BUILD=true ./docker-setup.sh
 #   ./docker-setup.sh --skip-build
 #
 #   # 强制覆盖 workspace 目录（开发时更新插件代码）
@@ -26,15 +29,16 @@
 #   ./docker-setup.sh --force
 #
 # 环境变量：
-#   OPENCLAW_INSTANCE_ID   - 实例标识，默认：default
-#   OPENCLAW_PORT_OFFSET   - 端口偏移量，默认：0（Gateway 端口 = 18789 + offset）
-#   OPENCLAW_NO_ONBOARD    - 是否跳过 onboarding，默认：false
-#   OPENCLAW_SKIP_BUILD    - 是否跳过镜像构建，默认：false
-#   OPENCLAW_FORCE_COPY    - 是否强制覆盖 workspace，默认：false
-#   OPENCLAW_IMAGE         - Docker 镜像名，默认：openclaw:local
-#   OPENCLAW_EXTRA_MOUNTS  - 额外挂载点，逗号分隔
-#   OPENCLAW_HOME_VOLUME   - 命名卷名称
-#   OPENCLAW_SANDBOX       - 是否启用沙箱，默认：false
+#   OPENCLAW_INSTANCE_ID       - 实例标识，默认：default
+#   OPENCLAW_INSTANCE_BASE_DIR - 实例基础目录，默认：/data/openclaw/openclaw_instances/
+#   OPENCLAW_PORT_OFFSET       - 端口偏移量，默认：0（Gateway 端口 = 18789 + offset）
+#   OPENCLAW_NO_ONBOARD        - 是否跳过 onboarding，默认：false
+#   OPENCLAW_SKIP_BUILD        - 是否跳过镜像构建，默认：false
+#   OPENCLAW_FORCE_COPY        - 是否强制覆盖 workspace，默认：false
+#   OPENCLAW_IMAGE             - Docker 镜像名，默认：openclaw:local
+#   OPENCLAW_EXTRA_MOUNTS      - 额外挂载点，逗号分隔
+#   OPENCLAW_HOME_VOLUME       - 命名卷名称
+#   OPENCLAW_SANDBOX           - 是否启用沙箱，默认：false
 # =============================================================================
 set -euo pipefail
 
@@ -317,10 +321,12 @@ fi
 # -----------------------------------------------------------------------------
 # 配置目录和环境变量（支持多实例隔离）
 # -----------------------------------------------------------------------------
-# 配置目录：~/.openclaw-${INSTANCE_ID}，每个实例独立配置
-OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw-${INSTANCE_ID}}"
-# 工作空间目录：~/.openclaw-${INSTANCE_ID}/workspace
-OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw-${INSTANCE_ID}/workspace}"
+# 实例基础目录：/data/openclaw/openclaw_instances/
+OPENCLAW_INSTANCE_BASE_DIR="${OPENCLAW_INSTANCE_BASE_DIR:-/data/openclaw/openclaw_instances/}"
+# 配置目录：${OPENCLAW_INSTANCE_BASE_DIR}${INSTANCE_ID}
+OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-${OPENCLAW_INSTANCE_BASE_DIR}${INSTANCE_ID}}"
+# 工作空间目录：${OPENCLAW_INSTANCE_BASE_DIR}${INSTANCE_ID}/workspace/
+OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-${OPENCLAW_INSTANCE_BASE_DIR}${INSTANCE_ID}/workspace/}"
 
 # 验证目录路径
 validate_mount_path_value "OPENCLAW_CONFIG_DIR" "$OPENCLAW_CONFIG_DIR"
