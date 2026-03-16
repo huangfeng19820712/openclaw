@@ -982,8 +982,8 @@ echo ""
 echo "==> Control UI Access"
 
 if [[ -n "$CONTROL_UI_ACCESS_URL" ]]; then
-  # 替换 localhost 为 127.0.0.1:PORT
-  access_url_display="http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/control-ui/?inviteCode=${CONTROL_UI_INVITE_CODE}&session=main"
+  # 使用脚本输出的完整 URL（已包含 token）
+  access_url_display="$CONTROL_UI_ACCESS_URL"
 
   echo "    Control UI is ready!"
   echo ""
