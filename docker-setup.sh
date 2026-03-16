@@ -923,6 +923,25 @@ if [ ! -d "$PLUGIN_WORKSPACE_DIR" ]; then
   cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
 fi
 
+# 0.5 配置插件加载路径
+echo "    Configuring plugin load path..."
+${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway -e "
+const fs = require('fs');
+const configPath = '/home/node/.openclaw/openclaw.json';
+let config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+if (!config.plugins) config.plugins = {};
+if (!config.plugins.load) config.plugins.load = {};
+if (!Array.isArray(config.plugins.load.paths)) config.plugins.load.paths = [];
+const pluginPath = '/home/node/.openclaw/workspace/plugins/node-auto-register';
+if (!config.plugins.load.paths.includes(pluginPath)) {
+  config.plugins.load.paths.push(pluginPath);
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  console.log('Plugin path added:', pluginPath);
+} else {
+  console.log('Plugin path already exists:', pluginPath);
+}
+" 2>&1 || true
+
 # 1. 生成 Control UI 专用邀请码
 echo "    Generating Control UI invite code..."
 CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui 2>&1 || true)"
