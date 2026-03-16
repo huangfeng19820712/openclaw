@@ -89,6 +89,13 @@ export function setLastActiveSessionKey(host: SettingsHost, next: string) {
 
 export function applySettingsFromUrl(host: SettingsHost) {
   if (!window.location.search && !window.location.hash) {
+    // 即使没有 URL 参数，也检查是否有全局初始 token（来自自动配对脚本）
+    if (window.__OPENCLAW_INITIAL_TOKEN__) {
+      const token = window.__OPENCLAW_INITIAL_TOKEN__.trim();
+      if (token && token !== host.settings.token) {
+        applySettings(host, { ...host.settings, token });
+      }
+    }
     return;
   }
   const url = new URL(window.location.href);
@@ -98,7 +105,8 @@ export function applySettingsFromUrl(host: SettingsHost) {
   const gatewayUrlRaw = params.get("gatewayUrl") ?? hashParams.get("gatewayUrl");
   const nextGatewayUrl = gatewayUrlRaw?.trim() ?? "";
   const gatewayUrlChanged = Boolean(nextGatewayUrl && nextGatewayUrl !== host.settings.gatewayUrl);
-  const tokenRaw = hashParams.get("token");
+  // 优先从 hash 获取 token（更安全），其次从 search 获取
+  const tokenRaw = hashParams.get("token") || params.get("token");
   const passwordRaw = params.get("password") ?? hashParams.get("password");
   const sessionRaw = params.get("session") ?? hashParams.get("session");
   let shouldCleanUrl = false;
