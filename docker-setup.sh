@@ -964,7 +964,7 @@ echo "==> Control UI Access"
 
 if [[ -n "$CONTROL_UI_ACCESS_URL" ]]; then
   # 替换 localhost 为 127.0.0.1:PORT
-  access_url_display="http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/ui/?inviteCode=${CONTROL_UI_INVITE_CODE}&session=main"
+  access_url_display="http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/control-ui/?inviteCode=${CONTROL_UI_INVITE_CODE}&session=main"
 
   echo "    Control UI is ready!"
   echo ""
