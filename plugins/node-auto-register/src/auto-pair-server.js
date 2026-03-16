@@ -220,13 +220,17 @@ export function registerAutoPairServer() {
 
   const unregister = registerPluginHttpRoute({
     path: '/plugins/node-auto-register/api/auto-pair',
-    auth: 'none',
+    auth: 'plugin',
     handler: handleAutoPair,
     pluginId: 'node-auto-register',
     source: 'auto-pair-server.js',
   });
 
-  console.log('[auto-pair] Server registered at /plugins/node-auto-register/api/auto-pair');
+  if (unregister) {
+    console.log('[auto-pair] Server registered at /plugins/node-auto-register/api/auto-pair');
+  } else {
+    console.error('[auto-pair] Failed to register server - check for registration errors');
+  }
   return unregister;
 }
 
