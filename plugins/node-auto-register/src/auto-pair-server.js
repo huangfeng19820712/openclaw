@@ -19,9 +19,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
 
-// 引入 plugin SDK（在 Gateway 环境中可用）
+// 引入 device-pairing 函数（在 Gateway 环境中可用）
 let approveDevicePairing = null;
 let listDevicePairing = null;
 
@@ -200,38 +199,34 @@ async function handleAutoPair(req, res) {
 
 /**
  * 注册自动配对 HTTP 路由
+ * @param {any} api - Plugin SDK API (passed from plugin register function)
  */
-export function registerAutoPairServer() {
-  // 尝试注册 HTTP 路由
-  let registerPluginHttpRoute = null;
-
-  try {
-    const pluginSdk = require('openclaw/plugin-sdk');
-    registerPluginHttpRoute = pluginSdk.registerPluginHttpRoute;
-  } catch (err) {
-    console.warn('[auto-pair] Could not import registerPluginHttpRoute:', err.message);
+export function registerAutoPairServer(api) {
+  if (!api) {
+    console.error('[auto-pair] api is required - call registerAutoPairServer(api) from plugin register function');
     return null;
   }
 
-  if (!registerPluginHttpRoute) {
-    console.warn('[auto-pair] registerPluginHttpRoute not available');
+  if (!api.registerHttpRoute) {
+    console.error('[auto-pair] api.registerHttpRoute not available');
     return null;
   }
 
-  const unregister = registerPluginHttpRoute({
+  // 使用 api.registerHttpRoute 而不是 registerPluginHttpRoute
+  // 因为在 plugin register 阶段，全局 registry 还未激活
+  api.registerHttpRoute({
     path: '/plugins/node-auto-register/api/auto-pair',
     auth: 'plugin',
     handler: handleAutoPair,
-    pluginId: 'node-auto-register',
-    source: 'auto-pair-server.js',
+    match: 'exact',
   });
 
-  if (unregister) {
-    console.log('[auto-pair] Server registered at /plugins/node-auto-register/api/auto-pair');
-  } else {
-    console.error('[auto-pair] Failed to register server - check for registration errors');
-  }
-  return unregister;
+  console.log('[auto-pair] Server registered at /plugins/node-auto-register/api/auto-pair');
+
+  // 返回一个空的清理函数（目前不需要特殊清理）
+  return () => {
+    console.log('[auto-pair] Server unregistered');
+  };
 }
 
 // 导出工具函数

@@ -7,31 +7,6 @@
 import { registerAutoPairServer } from './auto-pair-server.js';
 
 /**
- * 初始化自动配对服务
- * 在 plugin 加载时调用
- */
-function initAutoPair() {
-  console.log('[node-auto-register] Initializing auto-pair service...');
-
-  try {
-    const unregister = registerAutoPairServer();
-
-    if (unregister) {
-      console.log('[node-auto-register] Auto-pair service registered');
-
-      // 返回清理函数，用于 plugin 卸载时调用
-      return unregister;
-    } else {
-      console.warn('[node-auto-register] Failed to register auto-pair service');
-    }
-  } catch (err) {
-    console.error('[node-auto-register] Error registering auto-pair service:', err);
-  }
-
-  return null;
-}
-
-/**
  * OpenClaw Plugin 注册函数
  * 当 OpenClaw 加载此 plugin 时调用
  *
@@ -41,15 +16,24 @@ function initAutoPair() {
 export function register(api) {
   console.log('[node-auto-register] Plugin loaded');
 
-  // 初始化自动配对服务
-  const cleanupAutoPair = initAutoPair();
+  try {
+    // 初始化自动配对服务，传入 api 以使用正确的 registry
+    const cleanupAutoPair = registerAutoPairServer(api);
 
-  // 返回清理函数
+    if (cleanupAutoPair) {
+      console.log('[node-auto-register] Auto-pair service registered');
+
+      // 返回清理函数
+      return cleanupAutoPair;
+    } else {
+      console.warn('[node-auto-register] Failed to register auto-pair service');
+    }
+  } catch (err) {
+    console.error('[node-auto-register] Error registering auto-pair service:', err);
+  }
+
   return () => {
     console.log('[node-auto-register] Plugin unloading');
-    if (cleanupAutoPair) {
-      cleanupAutoPair();
-    }
   };
 }
 
