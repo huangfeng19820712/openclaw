@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { registerInvitePairServer } from './invite-pair-server.js';
 import { registerAutoPairServer } from './auto-pair-server.js';
 
 /**
@@ -127,19 +128,26 @@ export function register(api) {
   injectAutoPairScriptToControlUi();
 
   try {
-    // 初始化自动配对服务，传入 api 以使用正确的 registry
+    // 注册邀请凭证服务
+    const cleanupInvitePair = registerInvitePairServer(api);
+
+    // 注册自动配对服务
     const cleanupAutoPair = registerAutoPairServer(api);
 
-    if (cleanupAutoPair) {
-      console.log('[node-auto-register] Auto-pair service registered');
+    if (cleanupAutoPair && cleanupInvitePair) {
+      console.log('[node-auto-register] All services registered successfully');
 
-      // 返回清理函数
-      return cleanupAutoPair;
+      // 返回合并的清理函数
+      return () => {
+        if (cleanupInvitePair) cleanupInvitePair();
+        if (cleanupAutoPair) cleanupAutoPair();
+        console.log('[node-auto-register] Plugin unloading');
+      };
     } else {
-      console.warn('[node-auto-register] Failed to register auto-pair service');
+      console.warn('[node-auto-register] Failed to register some services');
     }
   } catch (err) {
-    console.error('[node-auto-register] Error registering auto-pair service:', err);
+    console.error('[node-auto-register] Error registering services:', err);
   }
 
   return () => {

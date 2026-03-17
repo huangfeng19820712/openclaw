@@ -237,6 +237,14 @@ async function handleAutoPair(req, res) {
     console.log('[auto-pair]   - deviceId:', result.device.deviceId);
     console.log('[auto-pair]   - displayName:', result.device.displayName || '(none)');
 
+    // 从返回结果中提取设备 token
+    const tokens = result.device.tokens || {};
+    const firstRole = Object.keys(tokens)[0];
+    const deviceToken = firstRole ? tokens[firstRole].token : null;
+
+    console.log('[auto-pair]   - deviceToken:', deviceToken ? deviceToken.substring(0, 16) + '...' : '(none)');
+    console.log('[auto-pair]   - role:', firstRole || '(none)');
+
     // 增加邀请码使用次数
     incrementInviteCodeUsage(verification.codeName);
 
@@ -245,7 +253,8 @@ async function handleAutoPair(req, res) {
       ok: true,
       paired: true,
       deviceId: result.device.deviceId,
-      deviceName: result.device.displayName,
+      deviceToken: deviceToken,
+      role: firstRole,
     });
   } else {
     console.log('[auto-pair] Failed to approve pairing');

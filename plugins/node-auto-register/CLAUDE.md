@@ -15,18 +15,20 @@
 ```
 node-auto-register/
 ├── src/
-│   ├── index.js          # 核心客户端逻辑
-│   └── cli.js            # 命令行入口
+│   ├── index.js                  # 插件入口
+│   ├── cli.js                    # 命令行入口
+│   ├── auto-pair-server.js       # Control UI 自动配对 HTTP API
+│   ├── invite-pair-server.js     # 临时凭证获取 HTTP API
+│   ├── temp-token-service.js     # 临时凭证生成和验证服务
+│   └── inject-auto-pair.js       # 浏览器端自动配对脚本
 ├── scripts/
-│   ├── generate-invite-code.js    # 邀请码生成器
-│   ├── manage-invite-codes.js     # 邀请码管理器
-│   ├── invite-code-proxy.js       # WebSocket 代理（可选）
-│   └── invite-code-server.js      # 独立服务（旧方案）
+│   ├── generate-invite-code.js           # 邀请码生成器
+│   ├── generate-control-ui-invite-code.js # Control UI 邀请码生成器
+│   ├── manage-invite-codes.js            # 邀请码管理器
+│   └── inject-auto-pair-script.js        # 手动注入脚本工具
 └── docs/
     ├── README.md
-    ├── QUICKSTART.md
-    ├── CONFIG.md
-    └── GATEWAY_INTEGRATION.md
+    └── ...
 ```
 
 ## 两种运行模式
@@ -56,25 +58,29 @@ node-auto-register/
 - 使用 `connect.answer` 帧进行认证
 - 邀请码通过 `auth.token` 或 `auth.inviteCode` 传递
 
-## Gateway 集成
+## Control UI 自动配对
 
-### 方案 1: 直接连接
-Gateway 需要修改以支持邀请码验证（见 GATEWAY_INTEGRATION.md）
+### 工作原理
 
-### 方案 2: 代理模式
-运行 `invite-code-proxy.js`，无需修改 Gateway 源码。
+1. 用户访问 `http://gateway:18789/control-ui/?inviteCode=xxx&session=main`
+2. 浏览器脚本获取临时凭证（5 分钟有效，一次性使用）
+3. 建立 WebSocket 连接
+4. 检测到 `device.pair.requested` 事件后自动批准
+5. 保存设备 token 到 localStorage
+6. 刷新页面并自动登录
 
-## 测试
+### API 端点
+
+- `GET /plugins/node-auto-register/api/invite-pair?inviteCode=xxx` - 获取临时凭证
+- `GET /plugins/node-auto-register/api/auto-pair?inviteCode=xxx` - 自动批准配对
+
+### 测试
 
 ```bash
-# 安装依赖
-npm install
+# 生成 Control UI 邀请码
+node scripts/generate-control-ui-invite-code.js test
 
-# 运行插件
-node src/cli.js --invite-code TEST_CODE --gateway localhost --port 18789
-
-# 生成测试邀请码
-node scripts/generate-invite-code.js test
+# 访问生成的 URL（不需要 token 参数）
 ```
 
 ## 相关文档

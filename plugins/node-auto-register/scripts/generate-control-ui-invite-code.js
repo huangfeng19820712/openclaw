@@ -19,7 +19,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const INVITE_CODE_BYTES = 32;
-const GATEWAY_TOKEN_BYTES = 32; // Gateway token: 64 hex chars
 const DEFAULT_EXPIRY_DAYS = 365; // Control UI 邀请码默认 1 年有效
 const DEFAULT_MAX_USES = 999;    // 允许多次使用
 
@@ -70,10 +69,11 @@ function saveInviteCodes(codes) {
 
 /**
  * 生成 Control UI 访问 URL
+ * 注意：不再需要 token 参数，用户只需访问带 inviteCode 的 URL 即可
  */
-function generateControlUiUrl(inviteCode, gatewayToken, gatewayPort) {
+function generateControlUiUrl(inviteCode, gatewayPort) {
   const port = gatewayPort || 18789;
-  return `http://127.0.0.1:${port}/control-ui/?inviteCode=${inviteCode}&token=${gatewayToken}&session=main`;
+  return `http://127.0.0.1:${port}/control-ui/?inviteCode=${inviteCode}&session=main`;
 }
 
 /**
@@ -87,7 +87,6 @@ function main() {
   const expiryDays = parseInt(process.env.INVITE_EXPIRY_DAYS || DEFAULT_EXPIRY_DAYS, 10);
   const maxUses = parseInt(process.env.INVITE_MAX_USES || DEFAULT_MAX_USES, 10);
   const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT || 18789;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || randomBytes(GATEWAY_TOKEN_BYTES).toString('hex');
 
   // 生成邀请码
   const inviteCode = generateInviteCode();
@@ -105,14 +104,13 @@ function main() {
     active: true,
     description: process.env.INVITE_DESCRIPTION || 'Control UI auto-pair invite code',
     kind: 'control-ui', // 标记为 Control UI 专用
-    gatewayToken: gatewayToken, // 保存关联的 gateway token
   };
 
   // 保存
   saveInviteCodes(codes);
 
-  // 生成访问 URL
-  const accessUrl = generateControlUiUrl(inviteCode, gatewayToken, gatewayPort);
+  // 生成访问 URL（不再需要 token）
+  const accessUrl = generateControlUiUrl(inviteCode, gatewayPort);
 
   // 输出结果
   console.log('='.repeat(70));

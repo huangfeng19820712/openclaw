@@ -1,16 +1,17 @@
 /**
- * OpenClaw Control UI Auto-Pair Script
+ * OpenClaw Control UI Auto-Pair Script (Enhanced Version)
  *
- * 此脚本注入到 Control UI 页面，实现自动配对功能
- *
- * 工作流程:
- * 1. 页面加载时检测 URL 中的 inviteCode 和 token 参数
- * 2. 如果有 inviteCode，调用 /plugins/node-auto-register/api/auto-pair API 进行配对
- * 3. 配对成功后，将 token 保存到 hash 中，然后刷新页面
- * 4. 如果只有 token 没有 inviteCode，直接返回，让页面正常连接 Gateway
+ * 完整工作流程:
+ * 1. 检测 URL 中的 inviteCode 参数
+ * 2. 调用 /api/invite-pair 获取 tempToken
+ * 3. 使用 tempToken 建立 WebSocket 连接到 /connect
+ * 4. 监听配对完成事件
+ * 5. 调用 /api/auto-pair 获取设备 token
+ * 6. 保存设备 token 到 localStorage
+ * 7. 刷新页面
  *
  * 使用方式:
- * - 首次配对：http://gateway:18789/control-ui/?inviteCode=xxx&token=yyy&session=main
+ * - 首次配对：http://gateway:18789/control-ui/?inviteCode=xxx&session=main
  * - 已配对后：http://gateway:18789/control-ui/#token=yyy&session=main
  */
 
@@ -18,14 +19,77 @@
   'use strict';
 
   const LOG_PREFIX = '[openclaw-auto-pair]';
+  const API_BASE = '/plugins/node-auto-register/api';
+  const CONNECT_WS_PATH = '/connect';
+
+  // 存储状态
+  let tempToken = null;
+  let inviteCode = null;
+  let pairingCompleted = false;
+  let wsConnected = false;
+  let originalWebSocket = null;
+
+  /**
+   * 日志输出
+   */
+  function log(...args) {
+    console.log(LOG_PREFIX, ...args);
+  }
+
+  /**
+   * 错误日志
+   */
+  function logError(...args) {
+    console.error(LOG_PREFIX, ...args);
+  }
+
+  /**
+   * 获取 URL 参数
+   */
+  function getUrlParam(name) {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(name);
+  }
+
+  /**
+   * 调用临时凭证 API
+   * 注意：tempToken 用于建立 WebSocket 连接时的凭证
+   */
+  async function fetchTempToken(inviteCode) {
+    const apiUrl = API_BASE + '/invite-pair?inviteCode=' + encodeURIComponent(inviteCode);
+
+    try {
+      log('Fetching tempToken from:', apiUrl);
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      const result = await response.json();
+
+      if (result.ok) {
+        log('tempToken received, expires in', result.expiresInSeconds, 'seconds');
+        return { success: true, tempToken: result.tempToken, expiresInSeconds: result.expiresInSeconds };
+      } else {
+        logError('tempToken fetch failed:', result.error);
+        return { success: false, error: result.error };
+      }
+    } catch (err) {
+      logError('tempToken request failed:', err);
+      return { success: false, error: err.message };
+    }
+  }
 
   /**
    * 调用自动配对 API
    */
   async function autoPair(inviteCode) {
-    const apiUrl = '/plugins/node-auto-register/api/auto-pair?inviteCode=' + encodeURIComponent(inviteCode);
+    const apiUrl = API_BASE + '/auto-pair?inviteCode=' + encodeURIComponent(inviteCode);
 
     try {
+      log('Completing auto-pair...');
       const response = await fetch(apiUrl, {
         method: 'GET',
         headers: {
@@ -37,18 +101,27 @@
 
       if (result.ok) {
         if (result.paired) {
-          console.log(LOG_PREFIX, 'Device paired successfully:', result.deviceId);
-          return { success: true, action: 'paired', deviceId: result.deviceId };
+          log('Device paired successfully!');
+          log('  - deviceId:', result.deviceId);
+          log('  - role:', result.role);
+          log('  - deviceToken:', result.deviceToken ? result.deviceToken.substring(0, 16) + '...' : '(none)');
+          return {
+            success: true,
+            action: 'paired',
+            deviceId: result.deviceId,
+            deviceToken: result.deviceToken,
+            role: result.role,
+          };
         } else if (result.alreadyPaired) {
-          console.log(LOG_PREFIX, 'Device already paired');
+          log('Device already paired');
           return { success: true, action: 'already-paired' };
         }
       } else {
-        console.warn(LOG_PREFIX, 'Auto-pair failed:', result.error);
+        logError('Auto-pair failed:', result.error);
         return { success: false, error: result.error };
       }
     } catch (err) {
-      console.warn(LOG_PREFIX, 'Auto-pair request failed:', err);
+      logError('Auto-pair request failed:', err);
       return { success: false, error: err.message };
     }
 
@@ -56,23 +129,181 @@
   }
 
   /**
-   * 清理 inviteCode 参数，将 token 移动到 hash 中
+   * 保存设备 token 到 localStorage
    */
-  function cleanUrlParamsAndMoveTokenToHash() {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('inviteCode');
+  function saveDeviceToken(deviceId, deviceToken, role) {
+    const storageKey = 'openclaw.device.auth.v1';
 
-    // 将 token 从 search 移动到 hash
-    if (url.searchParams.has('token')) {
-      const token = url.searchParams.get('token');
-      url.searchParams.delete('token');
-      // 保存到 hash 中，格式：#token=xxx
-      const hashParams = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : '');
-      hashParams.set('token', token);
-      url.hash = hashParams.toString();
+    const stored = {
+      version: 1,
+      deviceId: deviceId || 'auto-paired-' + Date.now(),
+      tokens: {
+        [role || 'operator']: {
+          token: deviceToken,
+          scopes: ['control'],
+          createdAtMs: Date.now(),
+        },
+      },
+    };
+
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(stored));
+      log('Device token saved to localStorage');
+      log('  - Storage key:', storageKey);
+      log('  - deviceId:', deviceId);
+      log('  - role:', role);
+      return true;
+    } catch (err) {
+      logError('Failed to save device token:', err);
+      return false;
+    }
+  }
+
+  /**
+   * 拦截 WebSocket 连接，在连接头上添加 tempToken
+   */
+  function hijackWebSocket() {
+    if (!window.WebSocket) {
+      logError('WebSocket not available');
+      return;
     }
 
-    window.history.replaceState({}, '', url.toString());
+    originalWebSocket = window.WebSocket;
+
+    window.WebSocket = function(url, protocols) {
+      log('WebSocket constructor called with URL:', url);
+
+      // 检查是否是连接到 Gateway 的 WebSocket
+      if (typeof url === 'string' && url.includes(CONNECT_WS_PATH)) {
+        if (tempToken) {
+          // 在 URL 中添加 tempToken 参数
+          // 注意：这里假设 Gateway 支持通过查询参数传递凭证
+          // 如果 Gateway 不支持，需要在 Gateway 端进行处理
+          const separator = url.includes('?') ? '&' : '?';
+          const augmentedUrl = url + separator + 'tempToken=' + encodeURIComponent(tempToken);
+          log('Augmenting WebSocket connection with tempToken');
+          log('  Original URL:', url);
+          log('  Augmented URL:', augmentedUrl);
+
+          // 创建新的 WebSocket 连接
+          const ws = new originalWebSocket(augmentedUrl, protocols);
+          setupWebSocketHandlers(ws);
+          return ws;
+        } else {
+          logError('tempToken not available, connecting without augmentation');
+        }
+      }
+
+      // 正常连接
+      return new originalWebSocket(url, protocols);
+    };
+
+    // 保持原始 WebSocket 的静态属性
+    window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+    window.WebSocket.OPEN = originalWebSocket.OPEN;
+    window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+    window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+
+    log('WebSocket hijack installed');
+  }
+
+  /**
+   * 设置 WebSocket 处理器
+   */
+  function setupWebSocketHandlers(ws) {
+    ws.addEventListener('open', function() {
+      log('WebSocket connected');
+      wsConnected = true;
+    });
+
+    ws.addEventListener('error', function(err) {
+      logError('WebSocket error:', err);
+    });
+
+    ws.addEventListener('close', function(event) {
+      log('WebSocket closed:', event.code, event.reason);
+      wsConnected = false;
+    });
+
+    // 监听消息，检测配对事件
+    ws.addEventListener('message', function(event) {
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : null;
+        if (data && data.method === 'device.pair.requested') {
+          log('Detected device.pair.requested event');
+          handlePairingRequested();
+        }
+      } catch (e) {
+        // 忽略 JSON 解析错误
+      }
+    });
+  }
+
+  /**
+   * 处理配对请求事件
+   */
+  async function handlePairingRequested() {
+    if (pairingCompleted) {
+      log('Pairing already completed, skipping');
+      return;
+    }
+
+    pairingCompleted = true;
+
+    log('Starting auto-pair process...');
+
+    // 调用自动配对 API
+    const result = await autoPair(inviteCode);
+
+    if (result.success && result.deviceToken) {
+      // 保存设备 token
+      saveDeviceToken(result.deviceId, result.deviceToken, result.role);
+
+      // 清理 URL 参数
+      cleanUrlParams();
+
+      // 延迟刷新页面
+      log('Reloading page in 1 second...');
+      setTimeout(() => {
+        log('Reloading...');
+        window.location.reload();
+      }, 1000);
+    } else if (result.success && result.action === 'already-paired') {
+      // 已经配对过，直接清理 URL 并刷新
+      log('Already paired, cleaning up and refreshing');
+      cleanUrlParams();
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } else {
+      logError('Auto-pair failed:', result.error);
+      // 即使失败也清理 inviteCode 参数
+      cleanUrlParams();
+    }
+  }
+
+  /**
+   * 清理 URL 参数
+   */
+  function cleanUrlParams() {
+    const url = new URL(window.location.href);
+    let changed = false;
+
+    if (url.searchParams.has('inviteCode')) {
+      url.searchParams.delete('inviteCode');
+      changed = true;
+    }
+
+    // 也要清理 tempToken（如果存在）
+    if (url.searchParams.has('tempToken')) {
+      url.searchParams.delete('tempToken');
+      changed = true;
+    }
+
+    if (changed) {
+      window.history.replaceState({}, '', url.toString());
+      log('URL parameters cleaned');
+    }
   }
 
   /**
@@ -81,40 +312,42 @@
   async function main() {
     // 检查是否已经执行过
     if (window.__OPENCLAW_AUTO_PAIR_EXECUTED__) {
-      console.log(LOG_PREFIX, 'Already executed, skipping');
+      log('Already executed, skipping');
       return;
     }
     window.__OPENCLAW_AUTO_PAIR_EXECUTED__ = true;
 
-    // 获取 URL 参数
-    const urlParams = new URLSearchParams(window.location.search);
-    const inviteCode = urlParams.get('inviteCode');
+    log('=== Auto-pair script started ===');
 
-    // 没有 inviteCode，直接返回（让页面正常处理）
+    // 获取 URL 参数
+    inviteCode = getUrlParam('inviteCode');
+
+    // 没有 inviteCode，直接返回
     if (!inviteCode) {
-      console.log(LOG_PREFIX, 'No inviteCode parameter, skipping auto-pair');
+      log('No inviteCode parameter, skipping auto-pair');
       return;
     }
 
-    console.log(LOG_PREFIX, 'Invite code detected, starting auto-pair...');
+    log('Invite code detected:', inviteCode.substring(0, 8) + '...');
 
-    // 执行自动配对
-    const result = await autoPair(inviteCode);
+    // 安装 WebSocket 拦截器
+    hijackWebSocket();
 
-    if (result.success) {
-      // 配对成功，清理 URL 参数（将 token 移动到 hash）
-      cleanUrlParamsAndMoveTokenToHash();
+    // 获取临时凭证
+    log('Fetching tempToken...');
+    const tokenResult = await fetchTempToken(inviteCode);
 
-      // 等待一小段时间让 UI 稳定，然后刷新页面
-      setTimeout(() => {
-        console.log(LOG_PREFIX, 'Refreshing page...');
-        window.location.reload();
-      }, 1000);
-    } else {
-      console.warn(LOG_PREFIX, 'Auto-pair failed:', result.error);
-      // 配对失败也清理 inviteCode 参数，避免重复尝试
-      cleanUrlParamsAndMoveTokenToHash();
+    if (!tokenResult.success) {
+      logError('Failed to get tempToken:', tokenResult.error);
+      // 清理 URL 参数
+      cleanUrlParams();
+      return;
     }
+
+    tempToken = tokenResult.tempToken;
+    log('tempToken acquired, expires in', tokenResult.expiresInSeconds, 'seconds');
+
+    log('=== Auto-pair script initialized, waiting for WebSocket connection ===');
   }
 
   // 在 DOM 加载完成后执行

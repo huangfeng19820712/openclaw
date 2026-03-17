@@ -25,12 +25,18 @@
 
    点击部署完成后显示的 URL，例如：
    ```
-   http://127.0.0.1:18789/ui/?inviteCode=xxx&session=main
+   http://127.0.0.1:18789/control-ui/?inviteCode=xxx&session=main
    ```
+   **注意**：只需 `inviteCode` 参数，不需要 `token` 参数！
 
 3. **自动配对成功**
 
-   首次访问时会自动批准设备配对，无需手动执行 `devices approve` 命令。
+   首次访问时会自动完成以下流程：
+   - 获取临时凭证（5 分钟有效，一次性使用）
+   - 建立 WebSocket 连接
+   - 自动批准设备配对
+   - 保存设备 token 到 localStorage
+   - 刷新页面并自动登录
 
 ### 手动生成邀请码
 
