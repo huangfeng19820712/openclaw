@@ -1,14 +1,11 @@
 /**
  * OpenClaw Control UI Auto-Pair Script (Enhanced Version)
  *
- * 完整工作流程:
+ * 完整工作流程（一键配对模式）:
  * 1. 检测 URL 中的 inviteCode 参数
- * 2. 调用 /api/invite-pair 获取 tempToken
- * 3. 使用 tempToken 建立 WebSocket 连接到 /connect
- * 4. 监听配对完成事件
- * 5. 调用 /api/auto-pair 获取设备 token
- * 6. 保存设备 token 到 localStorage
- * 7. 刷新页面
+ * 2. 调用 /api/one-shot-pair 直接完成配对
+ * 3. 保存设备 token 到 localStorage
+ * 4. 刷新页面
  *
  * 使用方式:
  * - 首次配对：http://gateway:18789/control-ui/?inviteCode=xxx&session=main
@@ -20,14 +17,10 @@
 
   const LOG_PREFIX = '[openclaw-auto-pair]';
   const API_BASE = '/plugins/node-auto-register/api';
-  const CONNECT_WS_PATH = '/connect';
 
   // 存储状态
-  let tempToken = null;
   let inviteCode = null;
   let pairingCompleted = false;
-  let wsConnected = false;
-  let originalWebSocket = null;
 
   /**
    * 日志输出
@@ -52,44 +45,14 @@
   }
 
   /**
-   * 调用临时凭证 API
-   * 注意：tempToken 用于建立 WebSocket 连接时的凭证
+   * 调用一键配对 API
+   * 直接完成配对并返回设备 token，无需 WebSocket 连接
    */
-  async function fetchTempToken(inviteCode) {
-    const apiUrl = API_BASE + '/invite-pair?inviteCode=' + encodeURIComponent(inviteCode);
+  async function oneShotPair(inviteCode) {
+    const apiUrl = API_BASE + '/one-shot-pair?inviteCode=' + encodeURIComponent(inviteCode);
 
     try {
-      log('Fetching tempToken from:', apiUrl);
-      const response = await fetch(apiUrl, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
-
-      const result = await response.json();
-
-      if (result.ok) {
-        log('tempToken received, expires in', result.expiresInSeconds, 'seconds');
-        return { success: true, tempToken: result.tempToken, expiresInSeconds: result.expiresInSeconds };
-      } else {
-        logError('tempToken fetch failed:', result.error);
-        return { success: false, error: result.error };
-      }
-    } catch (err) {
-      logError('tempToken request failed:', err);
-      return { success: false, error: err.message };
-    }
-  }
-
-  /**
-   * 调用自动配对 API
-   */
-  async function autoPair(inviteCode) {
-    const apiUrl = API_BASE + '/auto-pair?inviteCode=' + encodeURIComponent(inviteCode);
-
-    try {
-      log('Completing auto-pair...');
+      log('Requesting one-shot pair...');
       const response = await fetch(apiUrl, {
         method: 'GET',
         headers: {
@@ -111,17 +74,18 @@
             deviceId: result.deviceId,
             deviceToken: result.deviceToken,
             role: result.role,
+            displayName: result.displayName,
           };
         } else if (result.alreadyPaired) {
           log('Device already paired');
           return { success: true, action: 'already-paired' };
         }
       } else {
-        logError('Auto-pair failed:', result.error);
+        logError('One-shot pair failed:', result.error);
         return { success: false, error: result.error };
       }
     } catch (err) {
-      logError('Auto-pair request failed:', err);
+      logError('One-shot pair request failed:', err);
       return { success: false, error: err.message };
     }
 
@@ -160,89 +124,27 @@
   }
 
   /**
-   * 拦截 WebSocket 连接，在连接头上添加 tempToken
+   * 清理 URL 参数
    */
-  function hijackWebSocket() {
-    if (!window.WebSocket) {
-      logError('WebSocket not available');
-      return;
+  function cleanUrlParams() {
+    const url = new URL(window.location.href);
+    let changed = false;
+
+    if (url.searchParams.has('inviteCode')) {
+      url.searchParams.delete('inviteCode');
+      changed = true;
     }
 
-    originalWebSocket = window.WebSocket;
-
-    window.WebSocket = function(url, protocols) {
-      log('WebSocket constructor called with URL:', url);
-
-      // 检查是否是连接到 Gateway 的 WebSocket
-      if (typeof url === 'string' && url.includes(CONNECT_WS_PATH)) {
-        if (tempToken) {
-          // 在 URL 中添加 tempToken 参数
-          // 注意：这里假设 Gateway 支持通过查询参数传递凭证
-          // 如果 Gateway 不支持，需要在 Gateway 端进行处理
-          const separator = url.includes('?') ? '&' : '?';
-          const augmentedUrl = url + separator + 'tempToken=' + encodeURIComponent(tempToken);
-          log('Augmenting WebSocket connection with tempToken');
-          log('  Original URL:', url);
-          log('  Augmented URL:', augmentedUrl);
-
-          // 创建新的 WebSocket 连接
-          const ws = new originalWebSocket(augmentedUrl, protocols);
-          setupWebSocketHandlers(ws);
-          return ws;
-        } else {
-          logError('tempToken not available, connecting without augmentation');
-        }
-      }
-
-      // 正常连接
-      return new originalWebSocket(url, protocols);
-    };
-
-    // 保持原始 WebSocket 的静态属性
-    window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
-    window.WebSocket.OPEN = originalWebSocket.OPEN;
-    window.WebSocket.CLOSING = originalWebSocket.CLOSING;
-    window.WebSocket.CLOSED = originalWebSocket.CLOSED;
-
-    log('WebSocket hijack installed');
+    if (changed) {
+      window.history.replaceState({}, '', url.toString());
+      log('URL parameters cleaned');
+    }
   }
 
   /**
-   * 设置 WebSocket 处理器
+   * 处理配对
    */
-  function setupWebSocketHandlers(ws) {
-    ws.addEventListener('open', function() {
-      log('WebSocket connected');
-      wsConnected = true;
-    });
-
-    ws.addEventListener('error', function(err) {
-      logError('WebSocket error:', err);
-    });
-
-    ws.addEventListener('close', function(event) {
-      log('WebSocket closed:', event.code, event.reason);
-      wsConnected = false;
-    });
-
-    // 监听消息，检测配对事件
-    ws.addEventListener('message', function(event) {
-      try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : null;
-        if (data && data.method === 'device.pair.requested') {
-          log('Detected device.pair.requested event');
-          handlePairingRequested();
-        }
-      } catch (e) {
-        // 忽略 JSON 解析错误
-      }
-    });
-  }
-
-  /**
-   * 处理配对请求事件
-   */
-  async function handlePairingRequested() {
+  async function handlePairing() {
     if (pairingCompleted) {
       log('Pairing already completed, skipping');
       return;
@@ -250,10 +152,10 @@
 
     pairingCompleted = true;
 
-    log('Starting auto-pair process...');
+    log('Starting one-shot pair process...');
 
-    // 调用自动配对 API
-    const result = await autoPair(inviteCode);
+    // 调用一键配对 API
+    const result = await oneShotPair(inviteCode);
 
     if (result.success && result.deviceToken) {
       // 保存设备 token
@@ -276,40 +178,16 @@
         window.location.reload();
       }, 500);
     } else {
-      logError('Auto-pair failed:', result.error);
+      logError('One-shot pair failed:', result.error);
       // 即使失败也清理 inviteCode 参数
       cleanUrlParams();
     }
   }
 
   /**
-   * 清理 URL 参数
-   */
-  function cleanUrlParams() {
-    const url = new URL(window.location.href);
-    let changed = false;
-
-    if (url.searchParams.has('inviteCode')) {
-      url.searchParams.delete('inviteCode');
-      changed = true;
-    }
-
-    // 也要清理 tempToken（如果存在）
-    if (url.searchParams.has('tempToken')) {
-      url.searchParams.delete('tempToken');
-      changed = true;
-    }
-
-    if (changed) {
-      window.history.replaceState({}, '', url.toString());
-      log('URL parameters cleaned');
-    }
-  }
-
-  /**
    * 主函数
    */
-  async function main() {
+  function main() {
     // 检查是否已经执行过
     if (window.__OPENCLAW_AUTO_PAIR_EXECUTED__) {
       log('Already executed, skipping');
@@ -330,24 +208,10 @@
 
     log('Invite code detected:', inviteCode.substring(0, 8) + '...');
 
-    // 安装 WebSocket 拦截器
-    hijackWebSocket();
+    // 直接开始配对（无需 WebSocket）
+    handlePairing();
 
-    // 获取临时凭证
-    log('Fetching tempToken...');
-    const tokenResult = await fetchTempToken(inviteCode);
-
-    if (!tokenResult.success) {
-      logError('Failed to get tempToken:', tokenResult.error);
-      // 清理 URL 参数
-      cleanUrlParams();
-      return;
-    }
-
-    tempToken = tokenResult.tempToken;
-    log('tempToken acquired, expires in', tokenResult.expiresInSeconds, 'seconds');
-
-    log('=== Auto-pair script initialized, waiting for WebSocket connection ===');
+    log('=== Auto-pair script completed ===');
   }
 
   // 在 DOM 加载完成后执行

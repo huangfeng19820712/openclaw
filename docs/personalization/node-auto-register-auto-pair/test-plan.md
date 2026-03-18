@@ -8,7 +8,7 @@
 |------|----------|------|
 | Node.js | >= 18.0.0 | 运行 OpenClaw 和插件 |
 | OpenClaw | 最新版 | 包含 device-pairing 模块 |
-| 浏览器 | Chrome/Firefox/Edge | 支持 WebSocket 和 localStorage |
+| 浏览器 | Chrome/Firefox/Edge | 支持 Fetch API 和 localStorage |
 
 ### 1.2 测试前准备
 
@@ -26,8 +26,8 @@ npm start
 # 4. 验证插件已加载
 # 查看启动日志，确认以下输出：
 # [node-auto-register] Plugin loaded
-# [auto-pair] Auto-pair server registered
-# [invite-pair] Invite-pair server registered
+# [one-shot-pair] === Registering one-shot pair server ===
+# [one-shot-pair] Server registered at /plugins/node-auto-register/api/one-shot-pair
 ```
 
 ### 1.3 验证邀请码已生成
@@ -58,9 +58,9 @@ node plugins/node-auto-register/scripts/manage-invite-codes.js list
 
 ## 2. 测试步骤
 
-### 2.1 测试场景 1：正常自动配对流程
+### 2.1 测试场景 1：正常一键配对流程
 
-**测试目标**：验证完整的自动配对流程是否正常工作
+**测试目标**：验证一键配对功能是否正常工作
 
 **前置条件**：
 - OpenClaw Gateway 正在运行
@@ -84,7 +84,10 @@ node plugins/node-auto-register/scripts/manage-invite-codes.js list
 3. **观察浏览器控制台日志**
    打开浏览器开发者工具（F12），查看 Console 输出
 
-4. **观察 Gateway 日志**
+4. **观察 Network 面板**
+   查看 `/plugins/node-auto-register/api/one-shot-pair` 请求
+
+5. **观察 Gateway 日志**
    查看 OpenClaw 启动终端的日志输出
 
 **预期结果**：
@@ -92,39 +95,41 @@ node plugins/node-auto-register/scripts/manage-invite-codes.js list
 | 步骤 | 预期行为 | 验证方式 |
 |------|----------|----------|
 | 页面加载 | inject-auto-pair.js 执行 | 浏览器控制台显示相关日志 |
-| 获取 tempToken | API 调用成功 | 浏览器 Network 面板显示 200 响应 |
-| WebSocket 连接 | 成功建立 | 浏览器 Network WS 面板显示连接 |
-| 配对请求生成 | Gateway 生成 pairing 事件 | Gateway 日志显示 `device.pair.requested` |
-| 自动配对 | 配对请求被批准 | Gateway 日志显示配对批准 |
-| Token 保存 | localStorage 包含设备 token | 浏览器 Application 面板查看 |
+| 配对请求 | API 调用成功 | Network 面板显示 200 响应 |
+| Token 保存 | localStorage 包含设备 token | Application 面板查看 |
 | 页面刷新 | 自动重新加载 | 页面刷新，显示 Control UI 主界面 |
 
 **浏览器控制台预期日志**：
 ```
-[auto-pair] Detected inviteCode: abc123...
-[auto-pair] Fetching tempToken...
-[auto-pair] tempToken received, expires in 300s
-[auto-pair] WebSocket connection hijacked
-[auto-pair] Connected to proxy
-[auto-pair] Pairing event detected
-[auto-pair] Completing auto-pair...
-[auto-pair] Device token received
-[auto-pair] Token saved to localStorage
-[auto-pair] Reloading page...
+[openclaw-auto-pair] === Auto-pair script started ===
+[openclaw-auto-pair] Invite code detected: abc123...
+[openclaw-auto-pair] Starting one-shot pair process...
+[openclaw-auto-pair] Requesting one-shot pair...
+[openclaw-auto-pair] Device paired successfully!
+[openclaw-auto-pair]   - deviceId: auto-pair-...
+[openclaw-auto-pair]   - role: operator
+[openclaw-auto-pair] Device token saved to localStorage
+[openclaw-auto-pair] URL parameters cleaned
+[openclaw-auto-pair] Reloading page in 1 second...
+[openclaw-auto-pair] Reloading...
 ```
 
 **Gateway 预期日志**：
 ```
-[auto-pair] === Auto-pair request received ===
-[auto-pair] Verifying invite code: abc123...
-[auto-pair] Code "test-auto-pair-..." validation successful
-[auto-pair] Fetching pending pairing requests...
-[auto-pair] Found 1 pending pairing request(s)
-[auto-pair] Approving pending request:
-[auto-pair]   - requestId: req-xxx
-[auto-pair]   - deviceId: device-yyy
-[auto-pair] Pairing approved successfully!
-[auto-pair] Invite code usage updated: test-auto-pair-... 0 -> 1
+[node-auto-register] Plugin loaded
+[one-shot-pair] === Registering one-shot pair server ===
+[one-shot-pair] Server registered at /plugins/node-auto-register/api/one-shot-pair
+[one-shot-pair] === One-shot pair request received ===
+[one-shot-pair] Invite code validation successful, code name: test-auto-pair-...
+[one-shot-pair] Generated virtual device: auto-pair-...
+[one-shot-pair] Creating pairing request...
+[one-shot-pair] Pairing request created: req-...
+[one-shot-pair] Approving pairing...
+[one-shot-pair] Pairing approved successfully!
+[one-shot-pair]   - deviceId: auto-pair-...
+[one-shot-pair]   - deviceToken: token-...
+[one-shot-pair]   - role: operator
+[one-shot-pair] Invite code usage updated: test-auto-pair-... 0 -> 1
 ```
 
 ---

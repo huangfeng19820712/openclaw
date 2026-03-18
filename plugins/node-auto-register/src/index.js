@@ -6,8 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { registerInvitePairServer } from './invite-pair-server.js';
-import { registerAutoPairServer } from './auto-pair-server.js';
+import { registerOneShotPairServer } from './one-shot-pair-server.js';
 
 /**
  * 查找 Control UI index.html 的可能路径
@@ -128,26 +127,22 @@ export function register(api) {
   injectAutoPairScriptToControlUi();
 
   try {
-    // 注册邀请凭证服务
-    const cleanupInvitePair = registerInvitePairServer(api);
+    // 注册一键配对服务
+    const cleanupOneShotPair = registerOneShotPairServer(api);
 
-    // 注册自动配对服务
-    const cleanupAutoPair = registerAutoPairServer(api);
+    if (cleanupOneShotPair) {
+      console.log('[node-auto-register] One-shot pair service registered successfully');
 
-    if (cleanupAutoPair && cleanupInvitePair) {
-      console.log('[node-auto-register] All services registered successfully');
-
-      // 返回合并的清理函数
+      // 返回清理函数
       return () => {
-        if (cleanupInvitePair) cleanupInvitePair();
-        if (cleanupAutoPair) cleanupAutoPair();
+        if (cleanupOneShotPair) cleanupOneShotPair();
         console.log('[node-auto-register] Plugin unloading');
       };
     } else {
-      console.warn('[node-auto-register] Failed to register some services');
+      console.warn('[node-auto-register] Failed to register one-shot pair service');
     }
   } catch (err) {
-    console.error('[node-auto-register] Error registering services:', err);
+    console.error('[node-auto-register] Error registering service:', err);
   }
 
   return () => {
