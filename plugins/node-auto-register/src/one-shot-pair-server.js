@@ -21,7 +21,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { verifyInviteCode, loadInviteCodes, incrementInviteCodeUsage } from './invite-pair-server.js';
 
 // 引入 device-pairing 函数
 let requestDevicePairing = null;
@@ -48,6 +47,100 @@ function initDevicePairing() {
 
 // 初始化 device pairing 函数
 initDevicePairing();
+
+/**
+ * 获取邀请码文件路径
+ */
+function getInviteCodeFilePath() {
+  const openclawDir = process.env.OPENCLAW_DIR || path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
+  return path.join(openclawDir, 'invite-codes.json');
+}
+
+/**
+ * 读取邀请码列表
+ */
+function loadInviteCodes() {
+  const filePath = getInviteCodeFilePath();
+  try {
+    const data = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return {};
+    }
+    throw err;
+  }
+}
+
+/**
+ * 验证邀请码是否有效
+ */
+function verifyInviteCode(inviteCode) {
+  console.log('[one-shot-pair] Verifying invite code:', inviteCode ? inviteCode.substring(0, 8) + '...' : '(empty)');
+
+  if (!inviteCode || typeof inviteCode !== 'string') {
+    console.log('[one-shot-pair] Invite code validation failed: invite code is required');
+    return { valid: false, reason: 'invite code is required' };
+  }
+
+  const codes = loadInviteCodes();
+  const now = Date.now();
+
+  console.log('[one-shot-pair] Loaded invite codes from:', getInviteCodeFilePath());
+  console.log('[one-shot-pair] Found', Object.keys(codes).length, 'invite code(s)');
+
+  for (const [name, data] of Object.entries(codes)) {
+    if (!data.active) {
+      console.log('[one-shot-pair] Code "', name, '" skipped: not active');
+      continue;
+    }
+    if (data.code !== inviteCode) {
+      continue;
+    }
+    if (data.expiresAt < now) {
+      console.log('[one-shot-pair] Code "', name, '" failed: expired at', new Date(data.expiresAt).toISOString());
+      return { valid: false, reason: 'expired' };
+    }
+    if (data.usedCount >= data.maxUses) {
+      console.log('[one-shot-pair] Code "', name, '" failed: max uses reached', data.usedCount, '/', data.maxUses);
+      return { valid: false, reason: 'max_uses_reached' };
+    }
+
+    console.log('[one-shot-pair] Code "', name, '" validation successful');
+    console.log('[one-shot-pair]   - Expires:', new Date(data.expiresAt).toISOString());
+    console.log('[one-shot-pair]   - Max uses:', data.maxUses);
+    console.log('[one-shot-pair]   - Current uses:', data.usedCount);
+
+    return {
+      valid: true,
+      codeName: name,
+      data: data,
+    };
+  }
+
+  console.log('[one-shot-pair] No matching valid invite code found');
+  return { valid: false, reason: 'invalid or expired invite code' };
+}
+
+/**
+ * 增加邀请码使用次数
+ */
+function incrementInviteCodeUsage(codeName) {
+  console.log('[one-shot-pair] Incrementing invite code usage for:', codeName);
+  const codes = loadInviteCodes();
+  if (codes[codeName]) {
+    const oldCount = codes[codeName].usedCount || 0;
+    codes[codeName].usedCount = oldCount + 1;
+    const filePath = getInviteCodeFilePath();
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, JSON.stringify(codes, null, 2), 'utf-8');
+    console.log('[one-shot-pair] Invite code usage updated:', codeName, oldCount, '->', oldCount + 1);
+    console.log('[one-shot-pair] Invite codes file saved to:', filePath);
+  }
+}
 
 /**
  * 生成虚拟设备信息
@@ -213,4 +306,4 @@ export function registerOneShotPairServer(api) {
 }
 
 // 导出工具函数
-export { handleOneShotPair };
+export { handleOneShotPair, verifyInviteCode, loadInviteCodes };
