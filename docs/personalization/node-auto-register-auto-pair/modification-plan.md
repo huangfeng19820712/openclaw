@@ -8,6 +8,7 @@
 | MC-002 | `src/one-shot-pair-server.js` | 修复文件路径 | ✅ 已完成 | P0 |
 | MC-003 | `src/inject-auto-pair.js` | 确保正确注入 | ✅ 已完成 | P0 |
 | MC-004 | `src/index.js` | 确保服务注册 | ✅ 已完成 | P0 |
+| MC-005 | `src/index.js` | 修复 CSP 问题（外部脚本引用） | ✅ 已完成 | P0 |
 
 ---
 
@@ -58,11 +59,16 @@ const gatewayPort = basePort + portOffset;
 在输出邀请码时，同时输出端口偏移信息：
 
 ```javascript
-console.log('生成 Control UI 邀请码:');
-console.log('  名称:', codeName);
-console.log('  邀请码:', inviteCode);
-console.log('  端口偏移:', portOffset === 0 ? '无' : `+${portOffset}`);
-console.log('  访问 URL:', accessUrl);
+console.log('='.repeat(70));
+console.log('OpenClaw Control UI Invite Code Generated');
+console.log('='.repeat(70));
+console.log(`Code Name:    ${codeName}`);
+console.log(`Invite Code:  ${inviteCode}`);
+console.log(`Port Offset:  ${portOffset === 0 ? 'None' : '+' + portOffset}`);
+console.log(`Gateway Port: ${gatewayPort}`);
+console.log(`Expires:      ${new Date(codes[codeName].expiresAt).toISOString()}`);
+console.log(`Max Uses:     ${maxUses}`);
+console.log('='.repeat(70));
 ```
 
 **验收测试：**
@@ -81,6 +87,8 @@ OPENCLAW_PORT_OFFSET=200 node scripts/generate-control-ui-invite-code.js test
 # 期望：端口 18989
 ```
 
+**当前状态：** ✅ 已完成
+
 ---
 
 ## MC-002: 修复 one-shot-pair-server.js 文件路径
@@ -98,91 +106,10 @@ OPENCLAW_PORT_OFFSET=200 node scripts/generate-control-ui-invite-code.js test
 ### 已完成的修改
 
 1. **新增 `getDevicePairingPaths()` 函数**
-   ```javascript
-   function getDevicePairingPaths() {
-     const openclawDir = process.env.OPENCLAW_DIR ||
-                        path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
-     const devicesDir = path.join(openclawDir, 'devices');
-     return {
-       dir: devicesDir,
-       pendingPath: path.join(devicesDir, 'pending.json'),
-       pairedPath: path.join(devicesDir, 'paired.json'),
-     };
-   }
-   ```
-
 2. **新增 `loadPendingRequests()` 函数**
-   ```javascript
-   function loadPendingRequests() {
-     const { pendingPath } = getDevicePairingPaths();
-     try {
-       const data = fs.readFileSync(pendingPath, 'utf-8');
-       return JSON.parse(data);
-     } catch (err) {
-       if (err.code === 'ENOENT') {
-         return {};
-       }
-       throw err;
-     }
-   }
-   ```
-
 3. **新增 `savePendingRequests()` 函数（原子写入）**
-   ```javascript
-   function savePendingRequests(pendingById) {
-     const { pendingPath } = getDevicePairingPaths();
-     const dir = path.dirname(pendingPath);
-     if (!fs.existsSync(dir)) {
-       fs.mkdirSync(dir, { recursive: true });
-     }
-     // 原子写入：先写临时文件，再重命名
-     const tmpPath = pendingPath + '.tmp';
-     fs.writeFileSync(tmpPath, JSON.stringify(pendingById, null, 2), 'utf-8');
-     fs.renameSync(tmpPath, pendingPath);
-   }
-   ```
-
 4. **新增 `createPairingRequest()` 函数**
-   ```javascript
-   function createPairingRequest(deviceInfo) {
-     const pendingById = loadPendingRequests();
-     const requestId = `req-${Date.now()}-${randomUUID().substring(0, 8)}`;
-
-     const now = Date.now();
-     const pendingRequest = {
-       requestId,
-       deviceId: deviceInfo.deviceId,
-       publicKey: deviceInfo.publicKey,
-       displayName: deviceInfo.displayName,
-       platform: deviceInfo.platform,
-       deviceFamily: deviceInfo.deviceFamily,
-       clientId: deviceInfo.clientId,
-       clientMode: deviceInfo.clientMode,
-       role: deviceInfo.role,
-       roles: deviceInfo.role ? [deviceInfo.role] : undefined,
-       scopes: deviceInfo.scopes,
-       silent: true,
-       isRepair: false,
-       ts: now,
-     };
-
-     pendingById[requestId] = pendingRequest;
-     savePendingRequests(pendingById);
-
-     return { status: 'pending', request: pendingRequest, created: true };
-   }
-   ```
-
-5. **修复 `handleOneShotPair()` 中的 `approveDevicePairing` 调用**
-   ```javascript
-   // 添加 baseDir 参数
-   const baseDir = process.env.OPENCLAW_DIR ||
-                   path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
-   const approveResult = await approveDevicePairing(
-     pairingResult.request.requestId,
-     baseDir
-   );
-   ```
+5. **修复 `handleOneShotPair()` 中的 `approveDevicePairing` 调用**（添加 `baseDir` 参数）
 
 **验收测试：**
 
@@ -194,6 +121,8 @@ curl -s "http://127.0.0.1:18889/plugins/node-auto-register/api/one-shot-pair?inv
 cat ~/.openclaw/devices/pending.json | jq .
 cat ~/.openclaw/devices/paired.json | jq .
 ```
+
+**当前状态：** ✅ 已完成
 
 ---
 
@@ -207,57 +136,7 @@ cat ~/.openclaw/devices/paired.json | jq .
 - 保存设备 token 到 localStorage
 - 自动刷新页面
 
-**实现状态：** ✅ 已完成
-
-**核心逻辑：**
-
-```javascript
-(function() {
-  'use strict';
-
-  const inviteCode = new URLSearchParams(window.location.search).get('inviteCode');
-  if (!inviteCode) {
-    console.log('[auto-pair] No inviteCode in URL, skipping auto-pair');
-    return;
-  }
-
-  console.log('[auto-pair] Found inviteCode, starting auto-pair...');
-
-  fetch('/plugins/node-auto-register/api/one-shot-pair?inviteCode=' + encodeURIComponent(inviteCode))
-    .then(res => res.json())
-    .then(data => {
-      if (data.ok && data.deviceToken) {
-        const stored = {
-          version: 1,
-          deviceId: data.deviceId,
-          tokens: {
-            [data.role]: {
-              token: data.deviceToken,
-              scopes: ['control'],
-              createdAtMs: Date.now()
-            }
-          }
-        };
-        localStorage.setItem('openclaw.device.auth.v1', JSON.stringify(stored));
-        console.log('[auto-pair] Device token saved to localStorage');
-        console.log('[auto-pair] Reloading page...');
-        location.reload();
-      } else {
-        console.error('[auto-pair] Pairing failed:', data.error);
-      }
-    })
-    .catch(err => {
-      console.error('[auto-pair] Error:', err);
-    });
-})();
-```
-
-**验收测试：**
-
-1. 访问 `http://127.0.0.1:18889/control-ui/?inviteCode=xxx&session=main`
-2. 打开浏览器 Console，查看日志
-3. 打开 Network 面板，查看 API 调用
-4. 打开 Application -> Local Storage，查看 token 保存
+**当前状态：** ✅ 已完成
 
 ---
 
@@ -269,43 +148,82 @@ cat ~/.openclaw/devices/paired.json | jq .
 - 加载插件时注册一键配对 HTTP 路由
 - 注入自动配对脚本到 Control UI 页面
 
-**实现状态：** ✅ 已完成
+**当前状态：** ✅ 已完成
 
-**核心逻辑：**
+---
+
+## MC-005: 修复 CSP 问题 - 使用外部脚本引用
+
+**文件：** `plugins/node-auto-register/src/index.js`、`plugins/node-auto-register/scripts/inject-auto-pair-script.js`
+
+**问题描述：**
+
+当访问 `http://127.0.0.1:18889/control-ui/?inviteCode=xxx&session=main` 时，浏览器控制台显示：
+
+```
+Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'self'".
+```
+
+**根本原因：**
+- 当前实现将 `inject-auto-pair.js` 的内容作为**内联脚本**注入到 HTML 的 `<head>` 中
+- Control UI 页面有 CSP（Content Security Policy）保护，只允许加载来自 `'self'` 的外部脚本文件
+- 内联脚本被 CSP 阻止执行
+
+**修改方案：**
+
+### 已完成的修改
+
+#### 步骤 1：修改 `index.js` - 使用外部脚本引用
+
+将脚本保存为独立文件 `auto-pair.js`，然后通过 `<script src="auto-pair.js">` 引用：
 
 ```javascript
-import { registerOneShotPairServer } from './one-shot-pair-server.js';
-import { injectAutoPairScriptToControlUi } from './inject-auto-pair.js';
+/**
+ * 注入脚本到 Control UI index.html（外部引用方式 - 避免 CSP 问题）
+ */
+function injectAutoPairScriptToControlUi() {
+  // ... 查找 index.html 路径 ...
 
-export function register(api) {
-  console.log('[node-auto-register] Plugin loaded');
+  // 1. 将脚本复制到 Control UI 目录（外部文件方式）
+  const targetScriptPath = path.join(uiDir, 'auto-pair.js');
+  fs.writeFileSync(targetScriptPath, scriptContent, 'utf-8');
 
-  // 注入自动配对脚本到 Control UI
-  injectAutoPairScriptToControlUi();
+  // 2. 在 index.html 中注入外部脚本引用
+  const scriptTag = '<script src="auto-pair.js"></script>\n';
+  const injectedHtml = html.replace('</head>', scriptTag + '</head>');
+  fs.writeFileSync(indexPath, injectedHtml, 'utf-8');
+}
+```
 
-  // 注册一键配对 HTTP 服务
-  const cleanupOneShotPair = registerOneShotPairServer(api);
+#### 步骤 2：修改 `inject-auto-pair-script.js` 工具
 
-  // 返回清理函数
-  return () => {
-    console.log('[node-auto-register] Plugin unregistered');
-    if (cleanupOneShotPair) {
-      cleanupOneShotPair();
-    }
-  };
+同样使用外部引用方式，并支持删除脚本文件：
+
+```javascript
+function removeScript(indexPath) {
+  // 移除 HTML 中的引用
+  const cleanHtml = html.replace('<script src="auto-pair.js"></script>\n', '');
+  fs.writeFileSync(indexPath, cleanHtml, 'utf-8');
+
+  // 删除 auto-pair.js 文件
+  const targetScriptPath = path.join(uiDir, 'auto-pair.js');
+  if (fs.existsSync(targetScriptPath)) {
+    fs.unlinkSync(targetScriptPath);
+  }
 }
 ```
 
 **验收测试：**
 
-```bash
-# 查看插件日志，确认服务注册成功
-docker logs openclaw-gw1-openclaw-gateway-1 | grep "one-shot-pair"
+1. 访问 `http://127.0.0.1:18889/control-ui/?inviteCode=xxx&session=main`
+2. 打开浏览器开发者工具 Console
+3. 确认没有 CSP 错误
+4. 确认 `[openclaw-auto-pair]` 日志正常输出
+5. 确认 Network 面板中 `auto-pair.js` 成功加载（HTTP 200）
+6. 确认配对完成后页面自动刷新
+7. 确认刷新后 localStorage 中包含设备 token
 
-# 期望输出：
-# [one-shot-pair] === Registering one-shot pair server ===
-# [one-shot-pair] Server registered at /plugins/node-auto-register/api/one-shot-pair
-```
+**当前状态：** ✅ 已完成
 
 ---
 
@@ -350,6 +268,7 @@ cat ~/.openclaw/devices/paired.json | jq .
 | 浏览器自动配对 | Console 有日志 | |
 | localStorage 保存 token | openclaw.device.auth.v1 | |
 | 页面自动刷新 | 配对完成后刷新 | |
+| 无 CSP 错误 | Console 无报错 | |
 
 ---
 
@@ -357,7 +276,9 @@ cat ~/.openclaw/devices/paired.json | jq .
 
 | 日期 | 修改项 | 说明 | 状态 |
 |------|--------|------|------|
+| 2026-03-20 | MC-005 | 修复 CSP 问题，改用外部脚本引用方式（`<script src="auto-pair.js">`） | ✅ |
 | 2026-03-19 | MC-001 | 添加 `OPENCLAW_PORT_OFFSET` 环境变量支持，修正端口计算逻辑 | ✅ |
+| 2026-03-19 | MC-002 | 修复 `one-shot-pair-server.js` 文件路径和 `approveDevicePairing` 参数 | ✅ |
 | 2026-03-19 | MC-002 | 修复 `one-shot-pair-server.js` 文件路径和 `approveDevicePairing` 参数 | ✅ |
 | 2026-03-19 | MC-003 | 确保 `inject-auto-pair.js` 正确注入 | ✅ |
 | 2026-03-19 | MC-004 | 确保服务注册 | ✅ |

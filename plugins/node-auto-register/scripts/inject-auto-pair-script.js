@@ -5,6 +5,10 @@
  *
  * 将自动配对脚本注入到 Control UI 的 index.html 中
  *
+ * 注入方式：外部脚本引用（避免 CSP 问题）
+ * - 将 auto-pair.js 复制到 Control UI 目录
+ * - 在 index.html 中引用 <script src="auto-pair.js"></script>
+ *
  * 用法:
  *   node scripts/inject-auto-pair-script.js [inject|remove]
  *
@@ -82,7 +86,15 @@ function getAutoPairScript() {
 }
 
 /**
- * 注入脚本到 index.html
+ * 获取 auto-pair.js 目标路径
+ */
+function getAutoPairScriptTargetPath(indexPath) {
+  const uiDir = path.dirname(indexPath);
+  return path.join(uiDir, 'auto-pair.js');
+}
+
+/**
+ * 注入脚本到 index.html（外部引用方式 - 避免 CSP 问题）
  */
 function injectScript(indexPath, scriptContent) {
   if (!fs.existsSync(indexPath)) {
@@ -90,28 +102,40 @@ function injectScript(indexPath, scriptContent) {
     return false;
   }
 
+  // 1. 将脚本复制到 Control UI 目录
+  const targetScriptPath = getAutoPairScriptTargetPath(indexPath);
+  try {
+    fs.writeFileSync(targetScriptPath, scriptContent, 'utf-8');
+    console.log('Auto-pair script copied to:', targetScriptPath);
+  } catch (err) {
+    console.error('Error: Failed to copy script:', err.message);
+    return false;
+  }
+
+  // 2. 在 index.html 中引用外部脚本
   let html = fs.readFileSync(indexPath, 'utf-8');
 
-  // 检查是否已经注入
-  if (html.includes('openclaw-auto-pair') || html.includes('OPENCLAW_AUTO_PAIR_EXECUTED')) {
-    console.log('Auto-pair script already injected');
+  // 检查是否已经注入（检查外部引用）
+  if (html.includes('auto-pair.js')) {
+    console.log('Auto-pair script already injected (external reference)');
     return true;
   }
 
-  // 在 </head> 之前注入
-  const scriptTag = `<script>\n${scriptContent}\n</script>\n`;
+  // 在 </head> 之前注入外部脚本引用
+  const scriptTag = '<script src="auto-pair.js"></script>\n';
   const injectionPoint = '</head>';
   const injectedHtml = html.replace(injectionPoint, scriptTag + injectionPoint);
 
   // 写回文件
   fs.writeFileSync(indexPath, injectedHtml, 'utf-8');
 
-  console.log('Auto-pair script injected to', indexPath);
+  console.log('Auto-pair script reference injected to', indexPath);
+  console.log('(CSP-compliant: external script file)');
   return true;
 }
 
 /**
- * 从 index.html 移除脚本
+ * 从 index.html 移除脚本引用
  */
 function removeScript(indexPath) {
   if (!fs.existsSync(indexPath)) {
@@ -121,26 +145,29 @@ function removeScript(indexPath) {
 
   let html = fs.readFileSync(indexPath, 'utf-8');
 
-  // 移除注入的脚本
-  const scriptStart = '<script>\n/**\n * OpenClaw Control UI Auto-Pair Script';
-  const scriptEnd = '})();\n</script>\n';
+  // 移除外部脚本引用
+  const scriptTag = '<script src="auto-pair.js"></script>\n';
+  const scriptIndex = html.indexOf(scriptTag);
 
-  const startIndex = html.indexOf(scriptStart);
-  if (startIndex === -1) {
-    console.log('Auto-pair script not found in', indexPath);
-    return true;
+  if (scriptIndex === -1) {
+    console.log('Auto-pair script reference not found in', indexPath);
+  } else {
+    const cleanHtml = html.replace(scriptTag, '');
+    fs.writeFileSync(indexPath, cleanHtml, 'utf-8');
+    console.log('Auto-pair script reference removed from', indexPath);
   }
 
-  const endIndex = html.indexOf(scriptEnd, startIndex);
-  if (endIndex === -1) {
-    console.error('Error: Could not find end of injected script');
-    return false;
+  // 尝试删除 auto-pair.js 文件
+  const targetScriptPath = getAutoPairScriptTargetPath(indexPath);
+  if (fs.existsSync(targetScriptPath)) {
+    try {
+      fs.unlinkSync(targetScriptPath);
+      console.log('Auto-pair script file deleted:', targetScriptPath);
+    } catch (err) {
+      console.log('Note: Could not delete script file:', err.message);
+    }
   }
 
-  const cleanHtml = html.substring(0, startIndex) + html.substring(endIndex + scriptEnd.length);
-  fs.writeFileSync(indexPath, cleanHtml, 'utf-8');
-
-  console.log('Auto-pair script removed from', indexPath);
   return true;
 }
 
