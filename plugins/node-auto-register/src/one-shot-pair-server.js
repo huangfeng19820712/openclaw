@@ -9,8 +9,8 @@
  * 工作流程:
  * 1. 验证 inviteCode 有效性
  * 2. 生成虚拟设备信息
- * 3. 创建配对请求 (requestDevicePairing)
- * 4. 立即批准配对 (approveDevicePairing)
+ * 3. 创建配对请求（直接写入 devices/pending.json）
+ * 4. 调用 approveDevicePairing(requestId, baseDir) 批准配对
  * 5. 返回设备 token 给客户端
  *
  * 用法 (在 plugin 中注册):
@@ -46,47 +46,56 @@ function initDevicePairing() {
 initDevicePairing();
 
 /**
- * 获取 device-pairing 状态文件路径
+ * 获取 device-pairing 状态文件路径（与 OpenClaw 核心保持一致）
+ * 返回两个独立文件路径：pending.json 和 paired.json
  */
-function getDevicePairingStatePath() {
+function getDevicePairingPaths() {
   const openclawDir = process.env.OPENCLAW_DIR || path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
-  return path.join(openclawDir, 'device-pairing-state.json');
+  const devicesDir = path.join(openclawDir, 'devices');
+  return {
+    dir: devicesDir,
+    pendingPath: path.join(devicesDir, 'pending.json'),
+    pairedPath: path.join(devicesDir, 'paired.json'),
+  };
 }
 
 /**
- * 加载 device-pairing 状态
+ * 加载 pending 配对请求
  */
-function loadDevicePairingState() {
-  const statePath = getDevicePairingStatePath();
+function loadPendingRequests() {
+  const { pendingPath } = getDevicePairingPaths();
   try {
-    const data = fs.readFileSync(statePath, 'utf-8');
+    const data = fs.readFileSync(pendingPath, 'utf-8');
     return JSON.parse(data);
   } catch (err) {
     if (err.code === 'ENOENT') {
-      return { pendingById: {}, pairedByDeviceId: {} };
+      return {};
     }
     throw err;
   }
 }
 
 /**
- * 保存 device-pairing 状态
+ * 保存 pending 配对请求（原子写入）
  */
-function saveDevicePairingState(state) {
-  const statePath = getDevicePairingStatePath();
-  const dir = path.dirname(statePath);
+function savePendingRequests(pendingById) {
+  const { pendingPath } = getDevicePairingPaths();
+  const dir = path.dirname(pendingPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+  // 原子写入：先写临时文件，再重命名
+  const tmpPath = pendingPath + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(pendingById, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, pendingPath);
 }
 
 /**
- * 创建配对请求（直接写入 state 文件）
+ * 创建配对请求（写入 pending.json）
  * 由于 requestDevicePairing 未导出，我们直接操作状态文件
  */
 function createPairingRequest(deviceInfo) {
-  const state = loadDevicePairingState();
+  const pendingById = loadPendingRequests();
   const requestId = `req-${Date.now()}-${randomUUID().substring(0, 8)}`;
 
   const now = Date.now();
@@ -107,11 +116,11 @@ function createPairingRequest(deviceInfo) {
     ts: now,
   };
 
-  state.pendingById[requestId] = pendingRequest;
-  saveDevicePairingState(state);
+  pendingById[requestId] = pendingRequest;
+  savePendingRequests(pendingById);
 
-  console.log('[one-shot-pair] Pairing request created in state file:', requestId);
-  console.log('[one-shot-pair] State file path:', getDevicePairingStatePath());
+  console.log('[one-shot-pair] Pairing request created in pending.json:', requestId);
+  console.log('[one-shot-pair] Pending file path:', getDevicePairingPaths().pendingPath);
 
   return {
     status: 'pending',
@@ -308,7 +317,8 @@ async function handleOneShotPair(req, res) {
 
   // 立即批准配对
   console.log('[one-shot-pair] Approving pairing...');
-  const approveResult = await approveDevicePairing(pairingResult.request.requestId);
+  const baseDir = process.env.OPENCLAW_DIR || path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
+  const approveResult = await approveDevicePairing(pairingResult.request.requestId, baseDir);
 
   if (!approveResult) {
     console.log('[one-shot-pair] Failed to approve pairing');

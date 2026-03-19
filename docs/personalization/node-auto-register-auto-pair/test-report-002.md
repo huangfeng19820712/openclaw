@@ -33,7 +33,7 @@
 
 ## 修复方案
 
-### 方案：直接操作 device-pairing-state.json 文件
+### 修复 1：移除对 `requestDevicePairing` 的依赖
 
 **修改文件：** `plugins/node-auto-register/src/one-shot-pair-server.js`
 
@@ -49,50 +49,63 @@
    let approveDevicePairing = null;
    ```
 
-2. **新增函数：直接操作状态文件创建配对请求**
+2. **新增函数：直接操作 pending.json 文件创建配对请求**
+
+   **注意：** OpenClaw 核心使用两个独立的文件存储配对状态：
+   - `devices/pending.json` - 存储待处理的配对请求
+   - `devices/paired.json` - 存储已配对的设备
+
    ```javascript
    /**
-    * 获取 device-pairing 状态文件路径
+    * 获取 device-pairing 状态文件路径（与 OpenClaw 核心保持一致）
     */
-   function getDevicePairingStatePath() {
+   function getDevicePairingPaths() {
      const openclawDir = process.env.OPENCLAW_DIR ||
                         path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
-     return path.join(openclawDir, 'device-pairing-state.json');
+     const devicesDir = path.join(openclawDir, 'devices');
+     return {
+       dir: devicesDir,
+       pendingPath: path.join(devicesDir, 'pending.json'),
+       pairedPath: path.join(devicesDir, 'paired.json'),
+     };
    }
 
    /**
-    * 加载 device-pairing 状态
+    * 加载 pending 配对请求
     */
-   function loadDevicePairingState() {
-     const statePath = getDevicePairingStatePath();
+   function loadPendingRequests() {
+     const { pendingPath } = getDevicePairingPaths();
      try {
-       const data = fs.readFileSync(statePath, 'utf-8');
+       const data = fs.readFileSync(pendingPath, 'utf-8');
        return JSON.parse(data);
      } catch (err) {
        if (err.code === 'ENOENT') {
-         return { pendingById: {}, pairedByDeviceId: {} };
+         return {};
        }
        throw err;
      }
    }
 
    /**
-    * 保存 device-pairing 状态
+    * 保存 pending 配对请求（原子写入）
     */
-   function saveDevicePairingState(state) {
-     const statePath = getDevicePairingStatePath();
-     const dir = path.dirname(statePath);
+   function savePendingRequests(pendingById) {
+     const { pendingPath } = getDevicePairingPaths();
+     const dir = path.dirname(pendingPath);
      if (!fs.existsSync(dir)) {
        fs.mkdirSync(dir, { recursive: true });
      }
-     fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+     // 原子写入：先写临时文件，再重命名
+     const tmpPath = pendingPath + '.tmp';
+     fs.writeFileSync(tmpPath, JSON.stringify(pendingById, null, 2), 'utf-8');
+     fs.renameSync(tmpPath, pendingPath);
    }
 
    /**
-    * 创建配对请求（直接写入 state 文件）
+    * 创建配对请求（写入 pending.json）
     */
    function createPairingRequest(deviceInfo) {
-     const state = loadDevicePairingState();
+     const pendingById = loadPendingRequests();
      const requestId = `req-${Date.now()}-${randomUUID().substring(0, 8)}`;
 
      const pendingRequest = {
@@ -111,20 +124,26 @@
        ts: Date.now(),
      };
 
-     state.pendingById[requestId] = pendingRequest;
-     saveDevicePairingState(state);
+     pendingById[requestId] = pendingRequest;
+     savePendingRequests(pendingById);
 
      return { status: 'pending', request: pendingRequest, created: true };
    }
    ```
 
-3. **修改 `handleOneShotPair` 函数**
+3. **修改 `handleOneShotPair` 函数 - 添加 baseDir 参数**
+
    ```javascript
    // 修改前
-   const pairingResult = await requestDevicePairing(deviceInfo);
+   const approveResult = await approveDevicePairing(pairingResult.request.requestId);
 
    // 修改后
-   const pairingResult = createPairingRequest(deviceInfo);
+   const baseDir = process.env.OPENCLAW_DIR ||
+                   path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
+   const approveResult = await approveDevicePairing(
+     pairingResult.request.requestId,
+     baseDir
+   );
    ```
 
 ---
@@ -136,9 +155,11 @@
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
 | 移除 `requestDevicePairing` 依赖 | ✅ | 不再引用该函数 |
-| 新增 `createPairingRequest` 函数 | ✅ | 直接操作状态文件 |
-| `approveDevicePairing` 调用正确 | ✅ | 使用原有导入逻辑 |
-| 文件格式正确 | ✅ | ES6 模块语法正确 |
+| 新增 `getDevicePairingPaths()` 函数 | ✅ | 返回正确的文件路径（devices/pending.json） |
+| 新增 `loadPendingRequests()` 函数 | ✅ | 从 pending.json 加载请求 |
+| 新增 `savePendingRequests()` 函数 | ✅ | 原子写入 pending.json |
+| `approveDevicePairing` 调用正确 | ✅ | 添加 baseDir 参数 |
+| 文件格式正确 | ✅ | ES6 模块语法检查通过 |
 
 ### 2. 预期行为
 
@@ -146,8 +167,8 @@
 |----------|----------|------|
 | 有效邀请码 | 配对成功，返回设备 token | ⏳ 待测试 |
 | 无效邀请码 | 返回 401 错误 | ⏳ 待测试 |
-| 状态文件创建 | `device-pairing-state.json` 包含 pending 请求 | ⏳ 待测试 |
-| 配对批准 | `pairedByDeviceId` 包含新设备 | ⏳ 待测试 |
+| 状态文件创建 | `devices/pending.json` 包含 pending 请求 | ⏳ 待测试 |
+| 配对批准 | `devices/paired.json` 包含新设备 | ⏳ 待测试 |
 
 ---
 
@@ -181,8 +202,9 @@
 
 3. **验证配对结果**
    ```bash
-   # 查看设备配对状态
-   cat ~/.openclaw/device-pairing-state.json
+   # 查看设备配对状态文件
+   cat ~/.openclaw/devices/pending.json
+   cat ~/.openclaw/devices/paired.json
    ```
 
 ---
