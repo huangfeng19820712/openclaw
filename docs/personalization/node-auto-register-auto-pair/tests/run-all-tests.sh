@@ -8,6 +8,7 @@
 #   ./run-all-tests.sh --api-only # 仅运行 API 测试
 #   ./run-all-tests.sh tc001      # 运行单个测试
 #   ./run-all-tests.sh --help     # 显示帮助
+#   ./run-all-tests.sh --local   # 在本地服务器运行（不通过 SSH）
 #
 
 set -e
@@ -15,6 +16,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_HOST="${TEST_HOST:-root@192.168.90.6}"
 TEST_PORT="${TEST_PORT:-18889}"
+LOCAL_MODE="${LOCAL_MODE:-0}"
+
+# SSH_CMD 根据模式设置
+if [ "$LOCAL_MODE" = "1" ]; then
+  SSH_CMD=""
+else
+  SSH_CMD="ssh $TEST_HOST"
+fi
 
 # 颜色输出
 RED='\033[0;31m'
@@ -69,7 +78,16 @@ EOF
 
 run_test() {
   local test_name="$1"
-  local test_script="$SCRIPT_DIR/${test_name}.sh"
+  local test_script
+
+  # 根据测试名称获取完整脚本名
+  case "$test_name" in
+    tc001) test_script="$SCRIPT_DIR/tc001-port-offset.sh" ;;
+    tc003) test_script="$SCRIPT_DIR/tc003-one-shot-pair.sh" ;;
+    tc004) test_script="$SCRIPT_DIR/tc004-invite-code.sh" ;;
+    tc005) test_script="$SCRIPT_DIR/tc005-state-files.sh" ;;
+    *) test_script="$SCRIPT_DIR/${test_name}.sh" ;;
+  esac
 
   if [ ! -f "$test_script" ]; then
     log_error "测试脚本不存在：$test_script"
@@ -144,17 +162,20 @@ if $RUN_ALL; then
   TESTS_TO_RUN=(tc001 tc003 tc004 tc005)
 fi
 
-# 检查 SSH 连接
-log_header
-log_info "检查 SSH 连接..."
-if ssh -o ConnectTimeout=5 -o BatchMode=yes "$TEST_HOST" "echo '连接成功'" 2>/dev/null; then
-  log_info "SSH 连接正常 ($TEST_HOST)"
-else
-  log_error "无法连接到测试服务器：$TEST_HOST"
-  log_error "请检查 SSH 配置或使用 --host 参数指定正确的服务器"
-  exit 1
+# 检查 SSH 连接（仅非本地模式）
+if [ "$LOCAL_MODE" != "1" ]; then
+  log_header
+  log_info "检查 SSH 连接..."
+  if ssh -o ConnectTimeout=5 -o BatchMode=yes "$TEST_HOST" "echo '连接成功'" 2>/dev/null; then
+    log_info "SSH 连接正常 ($TEST_HOST)"
+  else
+    log_error "无法连接到测试服务器：$TEST_HOST"
+    log_error "请检查 SSH 配置或使用 --host 参数指定正确的服务器"
+    log_info "或者使用 --local 模式在本地运行（如果已在测试服务器上）"
+    exit 1
+  fi
+  log_header
 fi
-log_header
 
 # 运行测试
 echo ""

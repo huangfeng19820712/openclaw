@@ -61,8 +61,8 @@ echo ""
 
 # 步骤 1: 生成邀请码
 log_info "步骤 1: 生成测试邀请码..."
-INVITE_OUTPUT=$(ssh $SSH_HOST "OPENCLAW_PORT_OFFSET=100 node /data/workspace/openclaw/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js test-tc003" 2>/dev/null)
-INVITE_CODE=$(echo "$INVITE_OUTPUT" | grep -oP '邀请码：\K\S+' || true)
+INVITE_OUTPUT=$(ssh $SSH_HOST "node /data/workspace/openclaw/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js test-tc003" 2>/dev/null)
+INVITE_CODE=$(echo "$INVITE_OUTPUT" | grep -oP 'Invite Code:\s*\K\S+' || true)
 
 if [ -z "$INVITE_CODE" ]; then
   log_error "无法生成邀请码，退出测试"
