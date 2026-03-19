@@ -10,6 +10,8 @@
  *
  * 环境变量:
  *   OPENCLAW_DIR - OpenClaw 配置目录，默认 ~/.openclaw
+ *   OPENCLAW_PORT_OFFSET - 端口偏移量，默认 0（多实例部署时使用，如 100 表示端口 +100）
+ *   OPENCLAW_GATEWAY_PORT - Gateway 基础端口，默认 18789
  *   INVITE_EXPIRY_DAYS - 邀请码过期天数，默认 365 (Control UI 邀请码长期有效)
  *   INVITE_MAX_USES - 最大使用次数，默认 999 (允许多次使用)
  */
@@ -70,9 +72,14 @@ function saveInviteCodes(codes) {
 /**
  * 生成 Control UI 访问 URL
  * 注意：不再需要 token 参数，用户只需访问带 inviteCode 的 URL 即可
+ * 支持端口偏移：实际端口 = 基础端口 + PORT_OFFSET
  */
 function generateControlUiUrl(inviteCode, gatewayPort) {
-  const port = gatewayPort || 18789;
+  // 读取端口偏移配置
+  const portOffset = parseInt(process.env.OPENCLAW_PORT_OFFSET || '0', 10);
+  const basePort = gatewayPort || 18789;
+  const port = basePort + portOffset;
+
   return `http://127.0.0.1:${port}/control-ui/?inviteCode=${inviteCode}&session=main`;
 }
 
@@ -84,9 +91,11 @@ function main() {
   const codeName = args[0] || `control-ui-${Date.now()}`;
 
   // 解析参数
+  const portOffset = parseInt(process.env.OPENCLAW_PORT_OFFSET || '0', 10);
   const expiryDays = parseInt(process.env.INVITE_EXPIRY_DAYS || DEFAULT_EXPIRY_DAYS, 10);
   const maxUses = parseInt(process.env.INVITE_MAX_USES || DEFAULT_MAX_USES, 10);
-  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT || 18789;
+  const basePort = process.env.OPENCLAW_GATEWAY_PORT || 18789;
+  const gatewayPort = basePort + portOffset;
 
   // 生成邀请码
   const inviteCode = generateInviteCode();
@@ -118,6 +127,8 @@ function main() {
   console.log('='.repeat(70));
   console.log(`Code Name:    ${codeName}`);
   console.log(`Invite Code:  ${inviteCode}`);
+  console.log(`Port Offset:  ${portOffset === 0 ? 'None' : '+' + portOffset}`);
+  console.log(`Gateway Port: ${gatewayPort}`);
   console.log(`Expires:      ${new Date(codes[codeName].expiresAt).toISOString()}`);
   console.log(`Max Uses:     ${maxUses}`);
   console.log('='.repeat(70));
