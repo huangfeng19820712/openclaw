@@ -22,31 +22,103 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-// 引入 device-pairing 函数
-let requestDevicePairing = null;
+// 引入 approveDevicePairing 函数
 let approveDevicePairing = null;
 
 function initDevicePairing() {
   try {
-    // 尝试从 plugin-sdk 导入
+    // 尝试从 plugin-sdk 导入（只导出 approveDevicePairing 和 listDevicePairing）
     const devicePair = require('openclaw/plugin-sdk/device-pair');
-    requestDevicePairing = devicePair.requestDevicePairing;
     approveDevicePairing = devicePair.approveDevicePairing;
   } catch (err) {
     // 尝试从源文件导入
     try {
       const infraPath = path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw', 'dist', 'infra', 'device-pairing.js');
       const infra = require(infraPath);
-      requestDevicePairing = infra.requestDevicePairing;
       approveDevicePairing = infra.approveDevicePairing;
     } catch (err2) {
-      console.warn('[one-shot-pair] Could not import device-pairing functions:', err2.message);
+      console.warn('[one-shot-pair] Could not import approveDevicePairing:', err2.message);
     }
   }
 }
 
 // 初始化 device pairing 函数
 initDevicePairing();
+
+/**
+ * 获取 device-pairing 状态文件路径
+ */
+function getDevicePairingStatePath() {
+  const openclawDir = process.env.OPENCLAW_DIR || path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
+  return path.join(openclawDir, 'device-pairing-state.json');
+}
+
+/**
+ * 加载 device-pairing 状态
+ */
+function loadDevicePairingState() {
+  const statePath = getDevicePairingStatePath();
+  try {
+    const data = fs.readFileSync(statePath, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return { pendingById: {}, pairedByDeviceId: {} };
+    }
+    throw err;
+  }
+}
+
+/**
+ * 保存 device-pairing 状态
+ */
+function saveDevicePairingState(state) {
+  const statePath = getDevicePairingStatePath();
+  const dir = path.dirname(statePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+}
+
+/**
+ * 创建配对请求（直接写入 state 文件）
+ * 由于 requestDevicePairing 未导出，我们直接操作状态文件
+ */
+function createPairingRequest(deviceInfo) {
+  const state = loadDevicePairingState();
+  const requestId = `req-${Date.now()}-${randomUUID().substring(0, 8)}`;
+
+  const now = Date.now();
+  const pendingRequest = {
+    requestId,
+    deviceId: deviceInfo.deviceId,
+    publicKey: deviceInfo.publicKey,
+    displayName: deviceInfo.displayName,
+    platform: deviceInfo.platform,
+    deviceFamily: deviceInfo.deviceFamily,
+    clientId: deviceInfo.clientId,
+    clientMode: deviceInfo.clientMode,
+    role: deviceInfo.role,
+    roles: deviceInfo.role ? [deviceInfo.role] : undefined,
+    scopes: deviceInfo.scopes,
+    silent: true, // 静默模式，不需要用户手动批准
+    isRepair: false,
+    ts: now,
+  };
+
+  state.pendingById[requestId] = pendingRequest;
+  saveDevicePairingState(state);
+
+  console.log('[one-shot-pair] Pairing request created in state file:', requestId);
+  console.log('[one-shot-pair] State file path:', getDevicePairingStatePath());
+
+  return {
+    status: 'pending',
+    request: pendingRequest,
+    created: true,
+  };
+}
 
 /**
  * 获取邀请码文件路径
@@ -211,10 +283,10 @@ async function handleOneShotPair(req, res) {
 
   console.log('[one-shot-pair] Invite code validation successful, code name:', verification.codeName);
 
-  // 检查 device-pairing 函数是否可用
-  if (!requestDevicePairing || !approveDevicePairing) {
-    console.log('[one-shot-pair] Error: device-pairing functions not available');
-    sendJson(res, 500, { ok: false, error: 'device-pairing functions not available' });
+  // 检查 approveDevicePairing 函数是否可用
+  if (!approveDevicePairing) {
+    console.log('[one-shot-pair] Error: approveDevicePairing function not available');
+    sendJson(res, 500, { ok: false, error: 'approveDevicePairing function not available' });
     return;
   }
 
@@ -222,9 +294,9 @@ async function handleOneShotPair(req, res) {
   const deviceInfo = generateVirtualDeviceInfo();
   console.log('[one-shot-pair] Generated virtual device:', deviceInfo.deviceId);
 
-  // 创建配对请求
+  // 创建配对请求（直接写入 state 文件）
   console.log('[one-shot-pair] Creating pairing request...');
-  const pairingResult = await requestDevicePairing(deviceInfo);
+  const pairingResult = createPairingRequest(deviceInfo);
 
   if (pairingResult.status !== 'pending') {
     console.log('[one-shot-pair] Failed to create pairing request');

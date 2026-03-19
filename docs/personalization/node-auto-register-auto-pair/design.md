@@ -80,8 +80,8 @@ node-auto-register 插件的 Control UI 自动配对功能存在逻辑问题：
 **职责**：
 - 验证 inviteCode 有效性
 - 生成虚拟设备信息
-- 创建配对请求
-- 立即批准配对
+- 创建配对请求（直接写入 device-pairing-state.json）
+- 调用 approveDevicePairing 立即批准配对
 - 返回设备 token
 
 **端点**：
@@ -107,11 +107,20 @@ const deviceInfo = {
   scopes: ['control'],
 };
 
-// 3. 创建配对请求
-const pairingResult = await requestDevicePairing(deviceInfo);
+// 3. 创建配对请求（直接写入 device-pairing-state.json）
+// 注意：requestDevicePairing 未从 plugin-sdk 导出，需直接操作状态文件
+const state = loadDevicePairingState();
+const requestId = `req-${Date.now()}-${randomUUID().substring(0, 8)}`;
+state.pendingById[requestId] = {
+  requestId,
+  ...deviceInfo,
+  silent: true,
+  ts: Date.now(),
+};
+saveDevicePairingState(state);
 
 // 4. 批准配对
-const approveResult = await approveDevicePairing(pairingResult.request.requestId);
+const approveResult = await approveDevicePairing(requestId);
 
 // 5. 返回设备 token
 const tokens = approveResult.device.tokens || {};
@@ -120,6 +129,10 @@ const deviceToken = firstRole ? tokens[firstRole].token : null;
 
 return { ok: true, paired: true, deviceId, deviceToken, role: firstRole };
 ```
+
+**实现说明**：
+- 由于 `requestDevicePairing` 函数未从 `plugin-sdk/device-pair` 模块导出，采用直接操作 `device-pairing-state.json` 文件的方式创建配对请求
+- `approveDevicePairing` 函数可用，用于批准配对并生成设备 token
 
 #### 2.3.2 浏览器注入脚本 (inject-auto-pair.js) - 重写
 
