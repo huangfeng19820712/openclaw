@@ -186,7 +186,7 @@ function registerAutoPairScriptRoute(api) {
 
   api.registerHttpRoute({
     path: '/plugins/node-auto-register/static/auto-pair.js',
-    auth: 'none',
+    auth: 'plugin',
     handler: (req, res) => {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
