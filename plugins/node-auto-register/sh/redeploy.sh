@@ -127,6 +127,21 @@ fi
 
 echo ""
 
+# 同步插件代码到实例 workspace 目录
+log_header
+log_info "步骤 1.5: 同步插件代码到实例 workspace..."
+log_header
+
+INSTANCE_WORKSPACE_DIR="${INSTANCE_BASE_DIR}${INSTANCE_ID}/workspace"
+log_info "源目录：$WORKSPACE_DIR"
+log_info "目标目录：$INSTANCE_WORKSPACE_DIR"
+
+mkdir -p "$INSTANCE_WORKSPACE_DIR/plugins"
+cp -r "$WORKSPACE_DIR/plugins/node-auto-register" "$INSTANCE_WORKSPACE_DIR/plugins/"
+log_info "插件代码同步完成"
+
+echo ""
+
 # 仅清理模式
 if [ $CLEANUP_ONLY -eq 1 ]; then
   log_info "仅清理模式，退出"

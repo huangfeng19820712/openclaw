@@ -13,6 +13,8 @@
 | MC-007 | `scripts/quick-redeploy-plugin.sh` | 快速重新部署脚本 | ✅ 已完成 | P1 |
 | MC-008 | `sh/redeploy.sh` | 替换邀请码占位符 `<CODE>` 为实际值 | ✅ 已完成 | P1 |
 | MC-009 | `docker-instance-setup.sh` | 修复容器内代码不同步问题（git pull 后） | ✅ 已完成 | P0 |
+| MC-010 | `src/index.js` | 修复 auth: 'none' 为 auth: 'plugin' | ✅ 已完成 | P0 |
+| MC-011 | `sh/redeploy.sh` | 修复 workspace 路径同步问题 | ✅ 已完成 | P0 |
 
 ---
 
@@ -462,6 +464,127 @@ docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) \
 - 每次部署时，workspace 中的最新代码自动同步到容器内 `/app/` 目录
 - `index.html` 每次启动时重新注入，确保脚本不丢失
 - 插件路径配置为 `/app/dist/plugins/node-auto-register`，统一使用容器内路径
+
+**当前状态：** ✅ 已完成
+
+---
+
+## MC-010: 修复 auth: 'none' 无效配置
+
+**文件：** `plugins/node-auto-register/src/index.js`
+
+**问题描述：**
+- 插件 HTTP 路由注册时使用了 `auth: 'none'` 配置
+- 但 OpenClaw Plugin SDK 只支持 `auth: 'gateway'` 或 `auth: 'plugin'`
+- `auth: 'none'` 是无效配置，会导致路由注册失败（返回 error diagnostic）
+
+**类型定义（src/plugins/types.ts:205）：**
+```typescript
+export type OpenClawPluginHttpRouteAuth = "gateway" | "plugin";
+```
+
+**验证逻辑（src/plugins/registry.ts:329-337）：**
+```typescript
+if (params.auth !== "gateway" && params.auth !== "plugin") {
+  pushDiagnostic({
+    level: "error",
+    pluginId: record.id,
+    source: record.source,
+    message: `http route registration missing or invalid auth: ${normalizedPath}`,
+  });
+  return;  // 路由注册失败
+}
+```
+
+**两种 auth 模式的区别：**
+
+| auth 模式 | 认证要求 | 适用场景 |
+|-----------|----------|----------|
+| `auth: 'gateway'` | 需要有效的 gateway token | 受保护的管理 API、设备配对 API |
+| `auth: 'plugin'` | 不需要 gateway token | 公开资源、静态文件、Control UI 脚本 |
+
+**修改方案：**
+
+```javascript
+// 修改前
+api.registerHttpRoute({
+  path: '/plugins/node-auto-register/static/auto-pair.js',
+  auth: 'none',  // ❌ 无效配置
+  ...
+});
+
+// 修改后
+api.registerHttpRoute({
+  path: '/plugins/node-auto-register/static/auto-pair.js',
+  auth: 'plugin',  // ✅ 正确配置
+  ...
+});
+```
+
+**选择 `auth: 'plugin'` 的原因：**
+1. Control UI 页面访问脚本时没有 gateway token
+2. 脚本本身是公开的 JavaScript 文件，不需要保护
+3. `/plugins/...` 路径不在受保护前缀列表（只有 `/api/channels` 受保护）
+4. `auth: 'plugin'` 允许 plugin 自己处理认证（或不处理）
+
+**当前状态：** ✅ 已完成
+
+---
+
+## MC-011: 修复 redeploy.sh 中 workspace 路径同步问题
+
+**文件：** `plugins/node-auto-register/sh/redeploy.sh`
+
+**问题描述：**
+
+`redeploy.sh` 中定义的工作目录：
+```bash
+WORKSPACE_DIR="/data/workspace/openclaw"  # 硬编码
+```
+
+但 `docker-instance-setup.sh` 挂载的是实例目录：
+```bash
+OPENCLAW_INSTANCE_BASE_DIR="/data/openclaw/openclaw_instances/"
+OPENCLAW_WORKSPACE_DIR="${OPENCLAW_INSTANCE_BASE_DIR}${INSTANCE_ID}/workspace/"
+# 默认实例 (gw1): /data/openclaw/openclaw_instances/gw1/workspace/
+```
+
+**Docker 挂载关系：**
+```
+宿主机                                    容器内
+─────────────────────────────────────────────────────────
+/data/openclaw/openclaw_instances/gw1/workspace/  →  /home/node/.openclaw/workspace/
+```
+
+**问题分析：**
+- 代码更新在：`/data/workspace/openclaw`
+- 容器挂载的是：`/data/openclaw/openclaw_instances/gw1/workspace/`
+- 这两个是**不同的目录**，没有自动同步机制
+
+**修改方案：**
+
+在 `redeploy.sh` 的"清理容器"步骤之后、"重新部署"步骤之前添加同步代码：
+
+```bash
+# 同步插件代码到实例 workspace 目录
+log_header
+log_info "步骤 1.5: 同步插件代码到实例 workspace..."
+log_header
+
+INSTANCE_WORKSPACE_DIR="${INSTANCE_BASE_DIR}${INSTANCE_ID}/workspace"
+log_info "源目录：$WORKSPACE_DIR"
+log_info "目标目录：$INSTANCE_WORKSPACE_DIR"
+
+mkdir -p "$INSTANCE_WORKSPACE_DIR/plugins"
+cp -r "$WORKSPACE_DIR/plugins/node-auto-register" "$INSTANCE_WORKSPACE_DIR/plugins/"
+log_info "插件代码同步完成"
+```
+
+**同步流程：**
+1. 用户在 `/data/workspace/openclaw` 执行 `git pull` 更新代码
+2. `redeploy.sh` 将插件代码从 `/data/workspace/openclaw/plugins/node-auto-register` 复制到 `/data/openclaw/openclaw_instances/gw1/workspace/plugins/node-auto-register`
+3. `docker-instance-setup.sh` 通过绑定挂载将实例 workspace 挂载到容器内 `/home/node/.openclaw/workspace`
+4. 容器内同步步骤从 `/home/node/.openclaw/workspace` 复制到 `/app/dist/plugins/node-auto-register`
 
 **当前状态：** ✅ 已完成
 
