@@ -11,6 +11,8 @@
 | MC-005 | `src/index.js` | 修复 CSP 问题（外部脚本引用） | ✅ 已完成 | P0 |
 | MC-006 | `docker-instance-setup.sh` | 传递 PORT_OFFSET 环境变量 | ✅ 已完成 | P0 |
 | MC-007 | `scripts/quick-redeploy-plugin.sh` | 快速重新部署脚本 | ✅ 已完成 | P1 |
+| MC-008 | `sh/redeploy.sh` | 替换邀请码占位符 `<CODE>` 为实际值 | ✅ 已完成 | P1 |
+| MC-009 | `docker-instance-setup.sh` | 修复容器内代码不同步问题（git pull 后） | ✅ 已完成 | P0 |
 
 ---
 
@@ -299,8 +301,10 @@ cat ~/.openclaw/devices/paired.json | jq .
 
 | 日期 | 修改项 | 说明 | 状态 |
 |------|--------|------|------|
-| 2026-03-20 | MC-006 | 修复 `docker-instance-setup.sh` 中邀请码生成命令缺少 `OPENCLAW_PORT_OFFSET` 环境变量 | ✅ |
+| 2026-03-20 | MC-009 | 修复容器内代码不同步问题（git pull 后 workspace 代码同步到 `/app/`） | ✅ |
+| 2026-03-20 | MC-008 | 修复 `sh/redeploy.sh` 中邀请码占位符 `<CODE>` 为实际生成的邀请码 | ✅ |
 | 2026-03-20 | MC-007 | 创建快速重新部署脚本 `quick-redeploy-plugin.sh` | ✅ |
+| 2026-03-20 | MC-006 | 修复 `docker-instance-setup.sh` 中邀请码生成命令缺少 `OPENCLAW_PORT_OFFSET` 环境变量 | ✅ |
 | 2026-03-20 | MC-005 | 修复 CSP 问题，改用插件 HTTP 路由提供脚本（`/plugins/node-auto-register/static/auto-pair.js`） | ✅ |
 | 2026-03-19 | MC-001 | 添加 `OPENCLAW_PORT_OFFSET` 环境变量支持，修正端口计算逻辑 | ✅ |
 | 2026-03-19 | MC-002 | 修复 `one-shot-pair-server.js` 文件路径和 `approveDevicePairing` 参数 | ✅ |
@@ -353,6 +357,111 @@ CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node -e OPENCL
 # 指定实例
 ./plugins/node-auto-register/scripts/quick-redeploy-plugin.sh gw1
 ```
+
+**当前状态：** ✅ 已完成
+
+---
+
+## MC-008: 修复 sh/redeploy.sh 中邀请码占位符
+
+**文件：** `plugins/node-auto-register/sh/redeploy.sh`
+
+**问题描述：**
+- 脚本第 180 行输出的访问 URL 中使用占位符 `<CODE>`，而不是实际的邀请码
+- 用户需要手动替换 `<CODE>` 才能访问，体验不佳
+
+**修改方案：**
+
+在脚本末尾添加自动生成邀请码的逻辑：
+
+```bash
+# 生成 Control UI 邀请码
+log_info "生成 Control UI 邀请码..."
+GATEWAY_PORT=$((18789 + PORT_OFFSET))
+INVITE_OUTPUT="$(docker exec $CONTAINER_NAME node .../generate-control-ui-invite-code.js redeploy-$(date +%s) 2>&1 || true)"
+
+INVITE_CODE=""
+if echo "$INVITE_OUTPUT" | grep -q "Invite Code:"; then
+  INVITE_CODE="$(echo "$INVITE_OUTPUT" | grep "Invite Code:" | awk '{print $3}')"
+fi
+
+if [ -n "$INVITE_CODE" ]; then
+  log_info "访问 URL:"
+  echo "  http://127.0.0.1:${GATEWAY_PORT}/control-ui/?inviteCode=${INVITE_CODE}&session=main"
+else
+  log_warn "无法生成邀请码，使用占位符"
+  echo "  http://127.0.0.1:${GATEWAY_PORT}/control-ui/?inviteCode=<CODE>&session=main"
+fi
+```
+
+**优势：**
+- 用户无需手动替换邀请码
+- 自动使用正确的端口偏移
+- 提供完整可直接访问的 URL
+
+**当前状态：** ✅ 已完成
+
+---
+
+## MC-009: 修复容器内代码不同步问题
+
+**文件：** `docker-instance-setup.sh`
+
+**问题描述：**
+
+部署流程为：
+1. 本地 git 提交 → 服务器 `git pull` → 代码更新到 `/data/workspace/openclaw/`
+2. 删除旧容器 → 创建新容器
+
+问题：
+- 宿主机的 `/data/workspace/openclaw/` 通过 git pull 更新了 ✅
+- 但容器内 `/app/` 目录来自**镜像构建时的旧代码** ❌
+- 容器重启后，`/app/dist/control-ui/index.html` 中注入的脚本会丢失
+
+**根本原因：**
+- `/app/` = 镜像内目录（只读，构建时固定）
+- `/home/node/.openclaw/workspace/` = 宿主机绑定挂载（git pull 后更新）
+- 插件代码在 workspace 中是最新的，但 `/app/` 目录不会更新
+
+**修改方案：**
+
+在 `docker-instance-setup.sh` 中添加代码同步步骤：
+
+```bash
+# 0. 复制插件到 workspace 目录（总是执行，确保 git pull 后的代码同步到容器）
+PLUGIN_WORKSPACE_DIR="$OPENCLAW_WORKSPACE_DIR/plugins/node-auto-register"
+PLUGIN_CONTAINER_DIR="/app/dist/plugins/node-auto-register"
+
+echo "    Syncing plugin from workspace to container..."
+# 从 workspace 复制最新代码到容器内的 /app 目录
+docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) sh -c \
+  "mkdir -p $PLUGIN_CONTAINER_DIR && cp -r /home/node/.openclaw/workspace/plugins/node-auto-register/. $PLUGIN_CONTAINER_DIR/" || true
+
+# 0.5 配置插件加载路径
+${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway -e "
+const fs = require('fs');
+const configPath = '/home/node/.openclaw/openclaw.json';
+let config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+if (!config.plugins) config.plugins = {};
+if (!config.plugins.load) config.plugins.load = {};
+if (!Array.isArray(config.plugins.load.paths)) config.plugins.load.paths = [];
+const pluginPath = '/app/dist/plugins/node-auto-register';
+if (!config.plugins.load.paths.includes(pluginPath)) {
+  config.plugins.load.paths.push(pluginPath);
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  console.log('Plugin path configured:', pluginPath);
+}
+" 2>&1 || true
+
+# 2. 注入自动配对脚本到 Control UI（每次启动时重新注入）
+docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) \
+  node /app/dist/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject
+```
+
+**优势：**
+- 每次部署时，workspace 中的最新代码自动同步到容器内 `/app/` 目录
+- `index.html` 每次启动时重新注入，确保脚本不丢失
+- 插件路径配置为 `/app/dist/plugins/node-auto-register`，统一使用容器内路径
 
 **当前状态：** ✅ 已完成
 

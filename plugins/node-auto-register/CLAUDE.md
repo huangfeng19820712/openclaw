@@ -1,3 +1,4 @@
+
 # Node Auto-Register Plugin Development Guide
 
 ## 插件说明

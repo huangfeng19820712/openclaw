@@ -52,34 +52,19 @@ fi
 
 echo "==> Found container: $CONTAINER_NAME"
 
-# 1. 复制插件到 workspace 目录
-PLUGIN_WORKSPACE_DIR="$WORKSPACE_DIR/plugins/node-auto-register"
-echo "    Copying plugin to $PLUGIN_WORKSPACE_DIR..."
+# 1. 同步插件代码：从 workspace 复制到容器内 /app 目录
+echo "    Syncing plugin from workspace to container..."
+PLUGIN_CONTAINER_DIR="/app/dist/plugins/node-auto-register"
+docker exec "$CONTAINER_NAME" sh -c \
+  "mkdir -p $PLUGIN_CONTAINER_DIR && cp -r /home/node/.openclaw/workspace/plugins/node-auto-register/. $PLUGIN_CONTAINER_DIR/"
 
-if [[ ! -d "$PLUGIN_WORKSPACE_DIR" ]]; then
-  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
-fi
+echo "    Plugin code synced successfully"
 
-# 使用 docker cp 复制文件
-docker cp "$ROOT_DIR/plugins/node-auto-register" "$CONTAINER_NAME:/home/node/.openclaw/workspace/plugins/"
-
-echo "    Plugin files copied successfully"
-
-# 2. 重启插件（通过重启 gateway 或热重载）
-echo ""
-echo "==> Restarting gateway to reload plugin..."
-docker compose -f "$COMPOSE_FILE" restart openclaw-gateway
-
-# 等待网关重启
-echo "    Waiting for gateway to restart..."
-sleep 5
-
-# 3. 注入自动配对脚本到 Control UI
+# 2. 注入自动配对脚本到 Control UI（每次重新部署时重新注入）
 echo ""
 echo "==> Injecting auto-pair script to Control UI..."
 
-# 在运行中的容器内执行注入脚本
-INJECT_OUTPUT="$(docker exec "$CONTAINER_NAME" node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
+INJECT_OUTPUT="$(docker exec "$CONTAINER_NAME" node $PLUGIN_CONTAINER_DIR/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
 
 if echo "$INJECT_OUTPUT" | grep -qi "injected\|already"; then
   echo "    Auto-pair script injected successfully"
@@ -89,11 +74,11 @@ else
   echo "    $INJECT_OUTPUT"
 fi
 
-# 4. 生成新的邀请码（带端口偏移）
+# 3. 生成新的邀请码（带端口偏移）
 echo ""
 echo "==> Generating new Control UI invite code..."
 
-INVITE_OUTPUT="$(docker exec "$CONTAINER_NAME" node -e "process.env.OPENCLAW_PORT_OFFSET='$PORT_OFFSET'" /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js quick-pair-$(date +%s) 2>&1 || true)"
+INVITE_OUTPUT="$(docker exec "$CONTAINER_NAME" node -e "process.env.OPENCLAW_PORT_OFFSET='$PORT_OFFSET'" $PLUGIN_CONTAINER_DIR/scripts/generate-control-ui-invite-code.js quick-pair-$(date +%s) 2>&1 || true)"
 
 if echo "$INVITE_OUTPUT" | grep -q "Invite Code:"; then
   INVITE_CODE="$(echo "$INVITE_OUTPUT" | grep "Invite Code:" | awk '{print $3}')"
@@ -119,4 +104,8 @@ echo "Next steps:"
 echo "  1. Click the Access URL above to test auto-pairing"
 echo "  2. Check browser console for [openclaw-auto-pair] logs"
 echo "  3. Verify /plugins/node-auto-register/static/auto-pair.js loads (HTTP 200)"
+echo ""
+echo "Container paths:"
+echo "  Plugin code:    /app/dist/plugins/node-auto-register/"
+echo "  Inject script:  /app/dist/plugins/node-auto-register/scripts/inject-auto-pair-script.js"
 echo ""

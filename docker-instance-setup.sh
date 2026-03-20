@@ -933,18 +933,13 @@ echo "==> Control UI Auto-Pair Setup"
 # 等待网关完全启动
 sleep 3
 
-# 0. 复制插件到 workspace 目录（如果不存在）
+# 0. 复制插件到 workspace 目录（总是执行，确保 git pull 后的代码同步到容器）
 PLUGIN_WORKSPACE_DIR="$OPENCLAW_WORKSPACE_DIR/plugins/node-auto-register"
-if [[ "$FORCE_COPY" == "true" ]]; then
-  echo "    Forcing plugin copy (overwrite existing)..."
-  rm -rf "$PLUGIN_WORKSPACE_DIR"
-  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
-  cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
-elif [ ! -d "$PLUGIN_WORKSPACE_DIR" ]; then
-  echo "    Copying plugin to workspace directory..."
-  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
-  cp -r "$ROOT_DIR/plugins/node-auto-register" "$PLUGIN_WORKSPACE_DIR"
-fi
+PLUGIN_CONTAINER_DIR="/app/dist/plugins/node-auto-register"
+
+echo "    Syncing plugin from workspace to container..."
+# 从 workspace 复制最新代码到容器内的 /app 目录（解决 git pull 后代码不更新的问题）
+docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) sh -c "mkdir -p $PLUGIN_CONTAINER_DIR && cp -r /home/node/.openclaw/workspace/plugins/node-auto-register/. $PLUGIN_CONTAINER_DIR/" || true
 
 # 0.5 配置插件加载路径
 echo "    Configuring plugin load path..."
@@ -955,11 +950,11 @@ let config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 if (!config.plugins) config.plugins = {};
 if (!config.plugins.load) config.plugins.load = {};
 if (!Array.isArray(config.plugins.load.paths)) config.plugins.load.paths = [];
-const pluginPath = '/home/node/.openclaw/workspace/plugins/node-auto-register';
+const pluginPath = '/app/dist/plugins/node-auto-register';
 if (!config.plugins.load.paths.includes(pluginPath)) {
   config.plugins.load.paths.push(pluginPath);
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  console.log('Plugin path added:', pluginPath);
+  console.log('Plugin path configured:', pluginPath);
 } else {
   console.log('Plugin path already exists:', pluginPath);
 }
@@ -986,15 +981,12 @@ fi
 # 2. 注入自动配对脚本到 Control UI
 echo "    Injecting auto-pair script to Control UI..."
 
-# 等待网关服务启动
-echo "    Waiting for gateway to start..."
-sleep 3
-
-# 在运行中的容器内执行注入脚本
-INJECT_OUTPUT="$(docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
+# 在运行中的容器内执行注入脚本（每次启动时重新注入，确保使用最新代码）
+INJECT_OUTPUT="$(docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) node /app/dist/plugins/node-auto-register/scripts/inject-auto-pair-script.js inject 2>&1 || true)"
 
 if echo "$INJECT_OUTPUT" | grep -qi "injected\|already"; then
   echo "    Auto-pair script injected successfully"
+  echo "    $INJECT_OUTPUT"
 else
   echo "    Warning: Could not inject auto-pair script"
   echo "    $INJECT_OUTPUT"

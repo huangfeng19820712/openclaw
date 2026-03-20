@@ -176,10 +176,30 @@ log_header
 echo ""
 log_info "🎉 重新部署成功完成!"
 echo ""
-log_info "访问 URL:"
-echo "  http://127.0.0.1:$((18789 + PORT_OFFSET))/control-ui/?inviteCode=<CODE>&session=main"
-echo ""
+
+# 生成 Control UI 邀请码
+log_info "生成 Control UI 邀请码..."
+GATEWAY_PORT=$((18789 + PORT_OFFSET))
+INVITE_OUTPUT="$(docker exec $CONTAINER_NAME node /app/dist/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js redeploy-$(date +%s) 2>&1 || true)"
+
+INVITE_CODE=""
+if echo "$INVITE_OUTPUT" | grep -q "Invite Code:"; then
+  INVITE_CODE="$(echo "$INVITE_OUTPUT" | grep "Invite Code:" | awk '{print $3}')"
+fi
+
+if [ -n "$INVITE_CODE" ]; then
+  log_info "访问 URL:"
+  echo "  http://127.0.0.1:${GATEWAY_PORT}/control-ui/?inviteCode=${INVITE_CODE}&session=main"
+  echo ""
+else
+  log_warn "无法生成邀请码，使用占位符"
+  log_info "访问 URL:"
+  echo "  http://127.0.0.1:${GATEWAY_PORT}/control-ui/?inviteCode=<CODE>&session=main"
+  echo ""
+fi
+
 log_info "管理命令:"
 echo "  查看日志：docker logs -f $CONTAINER_NAME"
 echo "  清理实例：OPENCLAW_CONFIG_DIR=${CONFIG_DIR} ${WORKSPACE_DIR}/cleanup-instance.sh ${INSTANCE_ID}"
+echo "  查看邀请码：docker exec $CONTAINER_NAME node /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/manage-invite-codes.js list"
 echo ""
