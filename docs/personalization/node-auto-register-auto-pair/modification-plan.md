@@ -9,6 +9,8 @@
 | MC-003 | `src/inject-auto-pair.js` | 确保正确注入 | ✅ 已完成 | P0 |
 | MC-004 | `src/index.js` | 确保服务注册 | ✅ 已完成 | P0 |
 | MC-005 | `src/index.js` | 修复 CSP 问题（外部脚本引用） | ✅ 已完成 | P0 |
+| MC-006 | `docker-instance-setup.sh` | 传递 PORT_OFFSET 环境变量 | ✅ 已完成 | P0 |
+| MC-007 | `scripts/quick-redeploy-plugin.sh` | 快速重新部署脚本 | ✅ 已完成 | P1 |
 
 ---
 
@@ -297,11 +299,62 @@ cat ~/.openclaw/devices/paired.json | jq .
 
 | 日期 | 修改项 | 说明 | 状态 |
 |------|--------|------|------|
+| 2026-03-20 | MC-006 | 修复 `docker-instance-setup.sh` 中邀请码生成命令缺少 `OPENCLAW_PORT_OFFSET` 环境变量 | ✅ |
+| 2026-03-20 | MC-007 | 创建快速重新部署脚本 `quick-redeploy-plugin.sh` | ✅ |
 | 2026-03-20 | MC-005 | 修复 CSP 问题，改用插件 HTTP 路由提供脚本（`/plugins/node-auto-register/static/auto-pair.js`） | ✅ |
 | 2026-03-19 | MC-001 | 添加 `OPENCLAW_PORT_OFFSET` 环境变量支持，修正端口计算逻辑 | ✅ |
 | 2026-03-19 | MC-002 | 修复 `one-shot-pair-server.js` 文件路径和 `approveDevicePairing` 参数 | ✅ |
 | 2026-03-19 | MC-003 | 确保 `inject-auto-pair.js` 正确注入 | ✅ |
 | 2026-03-19 | MC-004 | 确保服务注册 | ✅ |
+
+---
+
+## MC-006: 修复 docker-instance-setup.sh 中 PORT_OFFSET 传递
+
+**文件：** `docker-instance-setup.sh`
+
+**问题描述：**
+- 脚本第 970 行调用 `generate-control-ui-invite-code.js` 时没有传递 `OPENCLAW_PORT_OFFSET` 环境变量
+- 导致容器内生成的 URL 端口始终是 18789，而不是正确的偏移端口（如 18889）
+
+**修改方案：**
+
+在 `docker compose run` 命令中添加 `-e OPENCLAW_PORT_OFFSET=$PORT_OFFSET`：
+
+```bash
+# 修改前
+CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway ...)"
+
+# 修改后
+CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node -e OPENCLAW_PORT_OFFSET=$PORT_OFFSET openclaw-gateway ...)"
+```
+
+**当前状态：** ✅ 已完成
+
+---
+
+## MC-007: 创建快速重新部署脚本
+
+**文件：** `plugins/node-auto-register/scripts/quick-redeploy-plugin.sh`
+
+**功能描述：**
+- 快速更新容器内的插件代码（无需重新运行完整的 docker-setup.sh）
+- 自动复制插件文件到容器
+- 自动重启 gateway 容器
+- 自动注入 auto-pair 脚本
+- 自动生成新的邀请码（带正确端口偏移）
+
+**使用方式：**
+
+```bash
+# 默认实例
+./plugins/node-auto-register/scripts/quick-redeploy-plugin.sh
+
+# 指定实例
+./plugins/node-auto-register/scripts/quick-redeploy-plugin.sh gw1
+```
+
+**当前状态：** ✅ 已完成
 
 ---
 

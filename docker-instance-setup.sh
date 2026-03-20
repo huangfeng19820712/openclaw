@@ -967,7 +967,7 @@ if (!config.plugins.load.paths.includes(pluginPath)) {
 
 # 1. 生成 Control UI 专用邀请码
 echo "    Generating Control UI invite code..."
-CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node openclaw-gateway /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui 2>&1 || true)"
+CONTROL_UI_INVITE_OUTPUT="$(${COMPOSE_HINT} run --rm --entrypoint node -e OPENCLAW_PORT_OFFSET=$PORT_OFFSET openclaw-gateway /home/node/.openclaw/workspace/plugins/node-auto-register/scripts/generate-control-ui-invite-code.js control-ui 2>&1 || true)"
 
 # 提取邀请码和访问 URL
 CONTROL_UI_INVITE_CODE=""
