@@ -162,56 +162,77 @@ cat ~/.openclaw/devices/paired.json | jq .
 
 ```
 Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'self'".
+http://127.0.0.1:18889/control-ui/auto-pair.js net::ERR_ABORTED 404 (Not Found)
 ```
 
 **根本原因：**
-- 当前实现将 `inject-auto-pair.js` 的内容作为**内联脚本**注入到 HTML 的 `<head>` 中
+- 原实现将 `inject-auto-pair.js` 的内容作为**内联脚本**注入到 HTML 的 `<head>` 中
 - Control UI 页面有 CSP（Content Security Policy）保护，只允许加载来自 `'self'` 的外部脚本文件
 - 内联脚本被 CSP 阻止执行
+- 尝试使用 `<script src="auto-pair.js">` 时，文件不存在于 Control UI 目录，返回 404
 
 **修改方案：**
 
 ### 已完成的修改
 
-#### 步骤 1：修改 `index.js` - 使用外部脚本引用
+#### 步骤 1：修改 `index.js` - 使用插件 HTTP 路由提供脚本
 
-将脚本保存为独立文件 `auto-pair.js`，然后通过 `<script src="auto-pair.js">` 引用：
+不再复制文件到 Control UI 目录，而是通过插件的 HTTP 路由提供脚本：
 
 ```javascript
 /**
- * 注入脚本到 Control UI index.html（外部引用方式 - 避免 CSP 问题）
+ * 注册自动配对脚本的静态资源路由
+ * 提供 /plugins/node-auto-register/static/auto-pair.js 端点
  */
+function registerAutoPairScriptRoute(api) {
+  const scriptContent = getAutoPairScript();
+
+  api.registerHttpRoute({
+    path: '/plugins/node-auto-register/static/auto-pair.js',
+    auth: 'none',
+    handler: (req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end(scriptContent);
+    },
+    match: 'exact',
+  });
+}
+```
+
+#### 步骤 2：修改 HTML 注入逻辑
+
+在 `index.html` 中引用插件提供的 URL：
+
+```javascript
 function injectAutoPairScriptToControlUi() {
   // ... 查找 index.html 路径 ...
 
-  // 1. 将脚本复制到 Control UI 目录（外部文件方式）
-  const targetScriptPath = path.join(uiDir, 'auto-pair.js');
-  fs.writeFileSync(targetScriptPath, scriptContent, 'utf-8');
-
-  // 2. 在 index.html 中注入外部脚本引用
-  const scriptTag = '<script src="auto-pair.js"></script>\n';
+  // 在 </head> 之前注入外部脚本引用（使用插件提供的 URL）
+  const scriptTag = '<script src="/plugins/node-auto-register/static/auto-pair.js"></script>\n';
   const injectedHtml = html.replace('</head>', scriptTag + '</head>');
   fs.writeFileSync(indexPath, injectedHtml, 'utf-8');
 }
 ```
 
-#### 步骤 2：修改 `inject-auto-pair-script.js` 工具
+#### 步骤 3：修改 `inject-auto-pair-script.js` 工具
 
-同样使用外部引用方式，并支持删除脚本文件：
+同样使用插件 URL 进行注入：
 
 ```javascript
-function removeScript(indexPath) {
-  // 移除 HTML 中的引用
-  const cleanHtml = html.replace('<script src="auto-pair.js"></script>\n', '');
-  fs.writeFileSync(indexPath, cleanHtml, 'utf-8');
-
-  // 删除 auto-pair.js 文件
-  const targetScriptPath = path.join(uiDir, 'auto-pair.js');
-  if (fs.existsSync(targetScriptPath)) {
-    fs.unlinkSync(targetScriptPath);
-  }
+function injectScript(indexPath, scriptContent) {
+  // 在 </head> 之前注入外部脚本引用（使用插件提供的 URL）
+  const scriptTag = '<script src="/plugins/node-auto-register/static/auto-pair.js"></script>\n';
+  const injectedHtml = html.replace('</head>', scriptTag + '</head>');
+  fs.writeFileSync(indexPath, injectedHtml, 'utf-8');
 }
 ```
+
+**优势：**
+- 不需要复制文件到 Control UI 目录
+- 不需要管理文件的生命周期
+- 脚本内容始终与插件同步更新
+- 适用于 Docker 容器等环境
 
 **验收测试：**
 
@@ -219,7 +240,7 @@ function removeScript(indexPath) {
 2. 打开浏览器开发者工具 Console
 3. 确认没有 CSP 错误
 4. 确认 `[openclaw-auto-pair]` 日志正常输出
-5. 确认 Network 面板中 `auto-pair.js` 成功加载（HTTP 200）
+5. 确认 Network 面板中 `/plugins/node-auto-register/static/auto-pair.js` 成功加载（HTTP 200，Content-Type: application/javascript）
 6. 确认配对完成后页面自动刷新
 7. 确认刷新后 localStorage 中包含设备 token
 
@@ -276,9 +297,8 @@ cat ~/.openclaw/devices/paired.json | jq .
 
 | 日期 | 修改项 | 说明 | 状态 |
 |------|--------|------|------|
-| 2026-03-20 | MC-005 | 修复 CSP 问题，改用外部脚本引用方式（`<script src="auto-pair.js">`） | ✅ |
+| 2026-03-20 | MC-005 | 修复 CSP 问题，改用插件 HTTP 路由提供脚本（`/plugins/node-auto-register/static/auto-pair.js`） | ✅ |
 | 2026-03-19 | MC-001 | 添加 `OPENCLAW_PORT_OFFSET` 环境变量支持，修正端口计算逻辑 | ✅ |
-| 2026-03-19 | MC-002 | 修复 `one-shot-pair-server.js` 文件路径和 `approveDevicePairing` 参数 | ✅ |
 | 2026-03-19 | MC-002 | 修复 `one-shot-pair-server.js` 文件路径和 `approveDevicePairing` 参数 | ✅ |
 | 2026-03-19 | MC-003 | 确保 `inject-auto-pair.js` 正确注入 | ✅ |
 | 2026-03-19 | MC-004 | 确保服务注册 | ✅ |

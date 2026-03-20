@@ -86,15 +86,8 @@ function getAutoPairScript() {
 }
 
 /**
- * 获取 auto-pair.js 目标路径
- */
-function getAutoPairScriptTargetPath(indexPath) {
-  const uiDir = path.dirname(indexPath);
-  return path.join(uiDir, 'auto-pair.js');
-}
-
-/**
  * 注入脚本到 index.html（外部引用方式 - 避免 CSP 问题）
+ * 使用插件提供的静态资源 URL 来加载脚本
  */
 function injectScript(indexPath, scriptContent) {
   if (!fs.existsSync(indexPath)) {
@@ -102,17 +95,6 @@ function injectScript(indexPath, scriptContent) {
     return false;
   }
 
-  // 1. 将脚本复制到 Control UI 目录
-  const targetScriptPath = getAutoPairScriptTargetPath(indexPath);
-  try {
-    fs.writeFileSync(targetScriptPath, scriptContent, 'utf-8');
-    console.log('Auto-pair script copied to:', targetScriptPath);
-  } catch (err) {
-    console.error('Error: Failed to copy script:', err.message);
-    return false;
-  }
-
-  // 2. 在 index.html 中引用外部脚本
   let html = fs.readFileSync(indexPath, 'utf-8');
 
   // 检查是否已经注入（检查外部引用）
@@ -121,8 +103,8 @@ function injectScript(indexPath, scriptContent) {
     return true;
   }
 
-  // 在 </head> 之前注入外部脚本引用
-  const scriptTag = '<script src="auto-pair.js"></script>\n';
+  // 在 </head> 之前注入外部脚本引用（使用插件提供的 URL）
+  const scriptTag = '<script src="/plugins/node-auto-register/static/auto-pair.js"></script>\n';
   const injectionPoint = '</head>';
   const injectedHtml = html.replace(injectionPoint, scriptTag + injectionPoint);
 
@@ -130,7 +112,7 @@ function injectScript(indexPath, scriptContent) {
   fs.writeFileSync(indexPath, injectedHtml, 'utf-8');
 
   console.log('Auto-pair script reference injected to', indexPath);
-  console.log('(CSP-compliant: external script file)');
+  console.log('(CSP-compliant: external script file via plugin route)');
   return true;
 }
 
@@ -146,7 +128,7 @@ function removeScript(indexPath) {
   let html = fs.readFileSync(indexPath, 'utf-8');
 
   // 移除外部脚本引用
-  const scriptTag = '<script src="auto-pair.js"></script>\n';
+  const scriptTag = '<script src="/plugins/node-auto-register/static/auto-pair.js"></script>\n';
   const scriptIndex = html.indexOf(scriptTag);
 
   if (scriptIndex === -1) {
@@ -155,17 +137,6 @@ function removeScript(indexPath) {
     const cleanHtml = html.replace(scriptTag, '');
     fs.writeFileSync(indexPath, cleanHtml, 'utf-8');
     console.log('Auto-pair script reference removed from', indexPath);
-  }
-
-  // 尝试删除 auto-pair.js 文件
-  const targetScriptPath = getAutoPairScriptTargetPath(indexPath);
-  if (fs.existsSync(targetScriptPath)) {
-    try {
-      fs.unlinkSync(targetScriptPath);
-      console.log('Auto-pair script file deleted:', targetScriptPath);
-    } catch (err) {
-      console.log('Note: Could not delete script file:', err.message);
-    }
   }
 
   return true;
