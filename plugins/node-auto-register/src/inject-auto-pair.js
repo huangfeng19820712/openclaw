@@ -104,8 +104,9 @@
       tokens: {
         [role || 'operator']: {
           token: deviceToken,
+          role: role || 'operator',
           scopes: ['control'],
-          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
         },
       },
     };

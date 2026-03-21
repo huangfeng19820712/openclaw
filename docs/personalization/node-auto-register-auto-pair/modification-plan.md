@@ -15,6 +15,7 @@
 | MC-009 | `docker-instance-setup.sh` | 修复容器内代码不同步问题（git pull 后） | ✅ 已完成 | P0 |
 | MC-010 | `src/index.js` | 修复 auth: 'none' 为 auth: 'plugin' | ✅ 已完成 | P0 |
 | MC-011 | `sh/redeploy.sh` | 修复 workspace 路径同步问题 | ✅ 已完成 | P0 |
+| MC-012 | `src/inject-auto-pair.js` | 修复 localStorage 数据格式（添加 role 和 updatedAtMs） | ✅ 已完成 | P0 |
 
 ---
 
@@ -585,6 +586,92 @@ log_info "插件代码同步完成"
 2. `redeploy.sh` 将插件代码从 `/data/workspace/openclaw/plugins/node-auto-register` 复制到 `/data/openclaw/openclaw_instances/gw1/workspace/plugins/node-auto-register`
 3. `docker-instance-setup.sh` 通过绑定挂载将实例 workspace 挂载到容器内 `/home/node/.openclaw/workspace`
 4. 容器内同步步骤从 `/home/node/.openclaw/workspace` 复制到 `/app/dist/plugins/node-auto-register`
+
+**当前状态：** ✅ 已完成
+
+---
+
+## MC-012: 修复 localStorage 数据格式问题
+
+**文件：** `plugins/node-auto-register/src/inject-auto-pair.js`
+
+**问题描述：**
+
+脚本保存的设备 token 格式与 Control UI 期望的格式不一致，导致配对成功后 WebSocket 连接仍然失败。
+
+**问题分析：**
+
+Control UI 使用 `loadDeviceAuthToken()` 从 localStorage 读取设备 token，期望的数据格式为：
+
+```typescript
+// 期望的格式（src/shared/device-auth.ts）
+{
+  version: 1;
+  deviceId: string;
+  tokens: {
+    [role: string]: {
+      token: string;
+      role: string;        // ❌ 我们缺少这个字段
+      scopes: string[];
+      updatedAtMs: number; // ❌ 我们用的是 createdAtMs
+    }
+  }
+}
+```
+
+但我们脚本保存的格式是：
+
+```javascript
+// 我们保存的格式（错误）
+{
+  version: 1,
+  deviceId: deviceId,
+  tokens: {
+    operator: {
+      token: deviceToken,
+      scopes: ['control'],
+      createdAtMs: Date.now(),  // ❌ 字段名错误
+      // ❌ 缺少 role 字段
+    }
+  }
+}
+```
+
+**问题后果：**
+- `loadDeviceAuthTokenFromStore()` 检查 `entry.token` 是否存在
+- 但缺少 `role` 字段可能导致其他验证失败
+- 使用 `createdAtMs` 而非 `updatedAtMs` 可能导致类型不匹配
+
+**修改方案：**
+
+```javascript
+// 修改前（错误）
+const stored = {
+  version: 1,
+  deviceId: deviceId || 'auto-paired-' + Date.now(),
+  tokens: {
+    [role || 'operator']: {
+      token: deviceToken,
+      scopes: ['control'],
+      createdAtMs: Date.now(),  // ❌ 错误字段名
+    },
+  },
+};
+
+// 修改后（正确）
+const stored = {
+  version: 1,
+  deviceId: deviceId || 'auto-paired-' + Date.now(),
+  tokens: {
+    [role || 'operator']: {
+      token: deviceToken,
+      role: role || 'operator',    // ✅ 添加 role 字段
+      scopes: ['control'],
+      updatedAtMs: Date.now(),     // ✅ 使用正确字段名
+    },
+  },
+};
+```
 
 **当前状态：** ✅ 已完成
 
