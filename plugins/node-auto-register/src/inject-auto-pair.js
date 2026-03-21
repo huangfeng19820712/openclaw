@@ -94,13 +94,16 @@
 
   /**
    * 保存设备 token 到 localStorage
+   * 同时创建 device-identity，确保 Control UI 能正确读取
    */
   function saveDeviceToken(deviceId, deviceToken, role) {
-    const storageKey = 'openclaw.device.auth.v1';
+    const authStorageKey = 'openclaw.device.auth.v1';
+    const identityStorageKey = 'openclaw-device-identity-v1';
 
-    const stored = {
+    // 1. 保存设备 token（与 Control UI 格式一致）
+    const authStored = {
       version: 1,
-      deviceId: deviceId || 'auto-paired-' + Date.now(),
+      deviceId: deviceId,
       tokens: {
         [role || 'operator']: {
           token: deviceToken,
@@ -111,10 +114,23 @@
       },
     };
 
+    // 2. 创建 device identity（使用与服务器配对的 deviceId）
+    // 注意：这里我们使用一个技巧 - 创建一个与 deviceId 关联的 identity
+    // 这样 Control UI 读取 identity 时能得到正确的 deviceId
+    const identityStored = {
+      version: 1,
+      deviceId: deviceId,
+      publicKey: 'auto-pair-' + Date.now(),  // 虚拟公钥
+      privateKey: 'auto-pair-' + Date.now(),  // 虚拟私钥
+      createdAtMs: Date.now(),
+    };
+
     try {
-      localStorage.setItem(storageKey, JSON.stringify(stored));
-      log('Device token saved to localStorage');
-      log('  - Storage key:', storageKey);
+      localStorage.setItem(authStorageKey, JSON.stringify(authStored));
+      localStorage.setItem(identityStorageKey, JSON.stringify(identityStored));
+      log('Device token and identity saved to localStorage');
+      log('  - Auth key:', authStorageKey);
+      log('  - Identity key:', identityStorageKey);
       log('  - deviceId:', deviceId);
       log('  - role:', role);
       return true;
