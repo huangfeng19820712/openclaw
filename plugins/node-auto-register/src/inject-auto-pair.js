@@ -93,27 +93,14 @@
   }
 
   /**
-   * 生成随机的 ed25519 密钥对（32 字节）
+   * Base64URL 编码（保留用于兼容性）
    */
-  function generateRandomKey() {
-    const array = new Uint8Array(32);
-    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-      crypto.getRandomValues(array);
-    } else {
-      // 降级方案（不够安全，但能工作）
-      for (let i = 0; i < 32; i++) {
-        array[i] = Math.floor(Math.random() * 256);
-      }
+  function base64UrlEncode(str) {
+    if (typeof str === 'string') {
+      return str;  // 已经是字符串，直接返回
     }
-    return array;
-  }
-
-  /**
-   * Base64URL 编码
-   */
-  function base64UrlEncode(bytes) {
     let binary = '';
-    for (const byte of bytes) {
+    for (const byte of str) {
       binary += String.fromCharCode(byte);
     }
     return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
@@ -123,7 +110,7 @@
    * 保存设备 token 到 localStorage
    * 同时创建 device-identity，确保 Control UI 能正确读取
    */
-  function saveDeviceToken(deviceId, deviceToken, role) {
+  function saveDeviceToken(deviceId, deviceToken, role, publicKey, privateKey) {
     const authStorageKey = 'openclaw.device.auth.v1';
     const identityStorageKey = 'openclaw-device-identity-v1';
 
@@ -141,14 +128,12 @@
       },
     };
 
-    // 2. 创建 device identity（使用与服务器配对的 deviceId 和有效的密钥）
-    // Control UI 使用 @noble/ed25519 库，需要有效的 32 字节密钥
-    const privateKeyBytes = generateRandomKey();
+    // 2. 创建 device identity（使用 API 返回的有效密钥对）
     const identityStored = {
       version: 1,
       deviceId: deviceId,  // 使用 API 返回的实际 deviceId
-      publicKey: base64UrlEncode(generateRandomKey()),  // 随机 32 字节公钥
-      privateKey: base64UrlEncode(privateKeyBytes),  // 随机 32 字节私钥
+      publicKey: publicKey,  // 使用 API 返回的有效公钥
+      privateKey: privateKey,  // 使用 API 返回的有效私钥
       createdAtMs: Date.now(),
     };
 
@@ -202,8 +187,8 @@
     const result = await oneShotPair(inviteCode);
 
     if (result.success && result.deviceToken) {
-      // 保存设备 token
-      saveDeviceToken(result.deviceId, result.deviceToken, result.role);
+      // 保存设备 token 和 identity
+      saveDeviceToken(result.deviceId, result.deviceToken, result.role, result.publicKey, result.privateKey);
 
       // 清理 URL 参数
       cleanUrlParams();
