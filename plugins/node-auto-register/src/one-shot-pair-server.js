@@ -235,10 +235,41 @@ function base64UrlEncode(bytes) {
 }
 
 /**
+ * Base64URL 解码
+ */
+function base64UrlDecode(input) {
+  const normalized = input.replaceAll('-', '+').replaceAll('_', '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+/**
+ * 字节转十六进制
+ */
+function bytesToHex(bytes) {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * SHA256 哈希（用于从公钥派生 deviceId）
+ */
+async function fingerprintPublicKey(publicKeyBytes) {
+  const hash = await crypto.subtle.digest('SHA-256', publicKeyBytes.slice().buffer);
+  return bytesToHex(new Uint8Array(hash));
+}
+
+/**
  * 生成有效的 ed25519 密钥对
  * 使用随机 32 字节作为私钥，然后派生公钥
  */
-function generateEd25519KeyPair() {
+async function generateEd25519KeyPair() {
   // 生成随机 32 字节私钥
   const privateKeyBytes = new Uint8Array(32);
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
@@ -262,7 +293,11 @@ function generateEd25519KeyPair() {
     publicKeyBytes[i] = hash[i];
   }
 
+  // 使用与 Control UI 相同的方式从公钥派生 deviceId
+  const deviceId = await fingerprintPublicKey(publicKeyBytes);
+
   return {
+    deviceId: deviceId,
     privateKey: base64UrlEncode(privateKeyBytes),
     publicKey: base64UrlEncode(publicKeyBytes),
   };
@@ -271,13 +306,13 @@ function generateEd25519KeyPair() {
 /**
  * 生成虚拟设备信息
  */
-function generateVirtualDeviceInfo() {
+async function generateVirtualDeviceInfo() {
   const now = Date.now();
-  const keyPair = generateEd25519KeyPair();
+  const keyPair = await generateEd25519KeyPair();
 
   return {
-    deviceId: `auto-pair-${now}-${randomUUID().substring(0, 8)}`,
-    publicKey: `auto-generated-key-${randomUUID()}`,
+    deviceId: keyPair.deviceId,  // 使用从公钥派生的 deviceId
+    publicKey: keyPair.publicKey,
     displayName: 'Auto-Paired Device (Control UI)',
     platform: 'web',
     deviceFamily: 'browser',
@@ -349,7 +384,7 @@ async function handleOneShotPair(req, res) {
   }
 
   // 生成虚拟设备信息
-  const deviceInfo = generateVirtualDeviceInfo();
+  const deviceInfo = await generateVirtualDeviceInfo();
   console.log('[one-shot-pair] Generated virtual device:', deviceInfo.deviceId);
 
   // 创建配对请求（直接写入 state 文件）
