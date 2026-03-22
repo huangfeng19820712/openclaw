@@ -658,25 +658,27 @@ else
   config_file="$OPENCLAW_CONFIG_DIR/openclaw.json"
 
   # 直接修改配置文件（更可靠，不依赖 CLI 连接）
-  if [[ -f "$config_file" ]]; then
-    docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint node openclaw-cli -e "
-      const fs = require('fs');
-      const configPath = '/home/node/.openclaw/openclaw.json';
-      let config;
-      try {
-        config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      } catch (e) {
-        config = {};
-      }
-      config.gateway = config.gateway || {};
-      config.gateway.auth = config.gateway.auth || {};
-      config.gateway.auth.token = \"$OPENCLAW_GATEWAY_TOKEN\";
-      config.gateway.auth.mode = 'token';
-      config.gateway.bind = 'loopback';
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
-      console.log('Config updated successfully');
-    "
+  # 确保配置文件存在（如果不存在会创建空配置文件）
+  if [[ ! -f "$config_file" ]]; then
+    echo '{}' > "$config_file"
   fi
+  docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint node openclaw-cli -e "
+    const fs = require('fs');
+    const configPath = '/home/node/.openclaw/openclaw.json';
+    let config;
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    } catch (e) {
+      config = {};
+    }
+    config.gateway = config.gateway || {};
+    config.gateway.auth = config.gateway.auth || {};
+    config.gateway.auth.token = \"$OPENCLAW_GATEWAY_TOKEN\";
+    config.gateway.auth.mode = 'token';
+    config.gateway.bind = '$OPENCLAW_GATEWAY_BIND';
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+    console.log('Config updated successfully');
+  "
 
   # 写入 .env 文件持久化
   if [[ -f "$ENV_FILE" ]]; then
