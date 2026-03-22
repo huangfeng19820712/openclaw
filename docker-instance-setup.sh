@@ -661,6 +661,8 @@ else
   # 确保配置文件存在（如果不存在会创建空配置文件）
   if [[ ! -f "$config_file" ]]; then
     echo '{}' > "$config_file"
+    # 修复文件权限，允许容器内 node 用户 (uid 1000) 写入
+    chown 1000:1000 "$config_file"
   fi
   docker compose "${COMPOSE_ARGS[@]}" run --rm --entrypoint node openclaw-cli -e "
     const fs = require('fs');
@@ -682,9 +684,16 @@ else
 
   # 写入 .env 文件持久化
   if [[ -f "$ENV_FILE" ]]; then
-    # 如果已存在，更新 token
+    # 如果已存在，更新 token（使用 sed 临时文件方式兼容 Windows Git Bash）
     if grep -q "^OPENCLAW_GATEWAY_TOKEN=" "$ENV_FILE" 2>/dev/null; then
-      sed -i "s/^OPENCLAW_GATEWAY_TOKEN=.*/OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN/" "$ENV_FILE"
+      sed -i.bak "s/^OPENCLAW_GATEWAY_TOKEN=.*/OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN/" "$ENV_FILE" 2>/dev/null || {
+        # Windows Git Bash 回退方案：使用临时文件
+        local tmp_file
+        tmp_file="$(mktemp)"
+        sed "s/^OPENCLAW_GATEWAY_TOKEN=.*/OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN/" "$ENV_FILE" > "$tmp_file"
+        mv "$tmp_file" "$ENV_FILE"
+      }
+      rm -f "${ENV_FILE}.bak" 2>/dev/null || true
     else
       echo "OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN" >> "$ENV_FILE"
     fi
@@ -936,11 +945,17 @@ echo "==> Control UI Auto-Pair Setup"
 sleep 3
 
 # 0. 复制插件到 workspace 目录（总是执行，确保 git pull 后的代码同步到容器）
+PLUGIN_SOURCE_DIR="$ROOT_DIR/plugins/node-auto-register"
 PLUGIN_WORKSPACE_DIR="$OPENCLAW_WORKSPACE_DIR/plugins/node-auto-register"
 PLUGIN_CONTAINER_DIR="/app/dist/plugins/node-auto-register"
 
 echo "    Syncing plugin from workspace to container..."
-# 从 workspace 复制最新代码到容器内的 /app 目录（解决 git pull 后代码不更新的问题）
+# 从源代码目录复制最新代码到 workspace 目录（解决 git pull 后代码不更新的问题）
+if [[ -d "$PLUGIN_SOURCE_DIR" ]]; then
+  mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
+  cp -r "$PLUGIN_SOURCE_DIR/. " "$PLUGIN_WORKSPACE_DIR/" 2>/dev/null || true
+fi
+# 从 workspace 复制最新代码到容器内的 /app 目录
 docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) sh -c "mkdir -p $PLUGIN_CONTAINER_DIR && cp -r /home/node/.openclaw/workspace/plugins/node-auto-register/. $PLUGIN_CONTAINER_DIR/" || true
 
 # 0.5 配置插件加载路径
