@@ -267,34 +267,26 @@ async function fingerprintPublicKey(publicKeyBytes) {
 
 /**
  * 生成有效的 ed25519 密钥对
- * 使用随机 32 字节作为私钥，然后派生公钥
+ * 使用 Node.js crypto 模块生成真正的 ed25519 密钥对
  */
-async function generateEd25519KeyPair() {
-  // 生成随机 32 字节私钥
-  const privateKeyBytes = new Uint8Array(32);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(privateKeyBytes);
-  } else {
-    // Node.js 环境使用 crypto 模块
-    const nodeCrypto = require('crypto');
-    const randomBytes = nodeCrypto.randomBytes(32);
-    for (let i = 0; i < 32; i++) {
-      privateKeyBytes[i] = randomBytes[i];
-    }
-  }
-
-  // 对于 ed25519，我们可以使用私钥的哈希作为公钥（简化版本）
-  // 注意：这不是真正的 ed25519 公钥派生，但对于我们的目的足够
-  // 因为 Control UI 会接受任何 32 字节的密钥对进行本地签名
+function generateEd25519KeyPair() {
   const nodeCrypto = require('crypto');
-  const publicKeyBytes = new Uint8Array(32);
-  const hash = nodeCrypto.createHash('sha256').update(privateKeyBytes).digest();
-  for (let i = 0; i < 32; i++) {
-    publicKeyBytes[i] = hash[i];
-  }
 
-  // 使用与 Control UI 相同的方式从公钥派生 deviceId
-  const deviceId = await fingerprintPublicKey(publicKeyBytes);
+  // 生成真正的 ed25519 密钥对
+  const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync('ed25519');
+
+  // 导出公钥为 SPKI DER 格式，然后提取原始的 32 字节公钥
+  const publicKeyDer = publicKey.export({ type: 'spki', format: 'der' });
+  // ed25519 SPKI 公钥：前 12 字节是前缀，后 32 字节是原始公钥
+  const publicKeyBytes = new Uint8Array(publicKeyDer.slice(12));
+
+  // 导出私钥为 PKCS8 DER 格式，然后提取原始的 32 字节私钥
+  const privateKeyDer = privateKey.export({ type: 'pkcs8', format: 'der' });
+  // ed25519 PKCS8 私钥：最后 32 字节是原始私钥
+  const privateKeyBytes = new Uint8Array(privateKeyDer.slice(-32));
+
+  // 使用与 Control UI 相同的方式从公钥派生 deviceId（SHA256 哈希）
+  const deviceId = nodeCrypto.createHash('sha256').update(publicKeyBytes).digest('hex');
 
   return {
     deviceId: deviceId,
