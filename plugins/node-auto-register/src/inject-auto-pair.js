@@ -75,6 +75,8 @@
             deviceToken: result.deviceToken,
             role: result.role,
             displayName: result.displayName,
+            publicKey: result.publicKey,
+            privateKey: result.privateKey,
           };
         } else if (result.alreadyPaired) {
           log('Device already paired');
