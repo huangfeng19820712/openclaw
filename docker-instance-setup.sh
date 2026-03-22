@@ -953,7 +953,7 @@ echo "    Syncing plugin from workspace to container..."
 # 从源代码目录复制最新代码到 workspace 目录（解决 git pull 后代码不更新的问题）
 if [[ -d "$PLUGIN_SOURCE_DIR" ]]; then
   mkdir -p "$(dirname "$PLUGIN_WORKSPACE_DIR")"
-  cp -r "$PLUGIN_SOURCE_DIR/. " "$PLUGIN_WORKSPACE_DIR/" 2>/dev/null || true
+  cp -r "$PLUGIN_SOURCE_DIR/." "$PLUGIN_WORKSPACE_DIR/" 2>/dev/null || true
 fi
 # 从 workspace 复制最新代码到容器内的 /app 目录
 docker exec $(${COMPOSE_HINT} ps -q openclaw-gateway) sh -c "mkdir -p $PLUGIN_CONTAINER_DIR && cp -r /home/node/.openclaw/workspace/plugins/node-auto-register/. $PLUGIN_CONTAINER_DIR/" || true
