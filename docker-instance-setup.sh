@@ -394,24 +394,42 @@ if [[ -n "$SANDBOX_ENABLED" && -S "$DOCKER_SOCKET_PATH" ]]; then
 fi
 export DOCKER_GID
 
-if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
-  EXISTING_CONFIG_TOKEN="$(read_config_gateway_token || true)"
-  if [[ -n "$EXISTING_CONFIG_TOKEN" ]]; then
-    OPENCLAW_GATEWAY_TOKEN="$EXISTING_CONFIG_TOKEN"
-    echo "Reusing gateway token from $OPENCLAW_CONFIG_DIR/openclaw.json"
+# Generate or reuse gateway token
+# When NO_ONBOARD=true, always generate a fresh random token for security.
+# When NO_ONBOARD=false, reuse existing token from config to maintain session continuity.
+if [[ "$NO_ONBOARD" == "true" ]]; then
+  # Force generation of new random token
+  if command -v openssl >/dev/null 2>&1; then
+    OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
   else
-    DOTENV_GATEWAY_TOKEN="$(read_env_gateway_token "$ROOT_DIR/.env" || true)"
-    if [[ -n "$DOTENV_GATEWAY_TOKEN" ]]; then
-      OPENCLAW_GATEWAY_TOKEN="$DOTENV_GATEWAY_TOKEN"
-      echo "Reusing gateway token from $ROOT_DIR/.env"
-    elif command -v openssl >/dev/null 2>&1; then
-      OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
-    else
-      OPENCLAW_GATEWAY_TOKEN="$(python3 - <<'PY'
+    OPENCLAW_GATEWAY_TOKEN="$(python3 - <<'PY'
 import secrets
 print(secrets.token_hex(32))
 PY
 )"
+  fi
+  echo "Generated new gateway token (NO_ONBOARD=true)"
+else
+  # Reuse existing token from config/env for onboarding mode
+  if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+    EXISTING_CONFIG_TOKEN="$(read_config_gateway_token || true)"
+    if [[ -n "$EXISTING_CONFIG_TOKEN" ]]; then
+      OPENCLAW_GATEWAY_TOKEN="$EXISTING_CONFIG_TOKEN"
+      echo "Reusing gateway token from $OPENCLAW_CONFIG_DIR/openclaw.json"
+    else
+      DOTENV_GATEWAY_TOKEN="$(read_env_gateway_token "$ROOT_DIR/.env" || true)"
+      if [[ -n "$DOTENV_GATEWAY_TOKEN" ]]; then
+        OPENCLAW_GATEWAY_TOKEN="$DOTENV_GATEWAY_TOKEN"
+        echo "Reusing gateway token from $ROOT_DIR/.env"
+      elif command -v openssl >/dev/null 2>&1; then
+        OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+      else
+        OPENCLAW_GATEWAY_TOKEN="$(python3 - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+)"
+      fi
     fi
   fi
 fi
@@ -678,6 +696,10 @@ else
     config.gateway.auth.token = \"$OPENCLAW_GATEWAY_TOKEN\";
     config.gateway.auth.mode = 'token';
     config.gateway.bind = '$OPENCLAW_GATEWAY_BIND';
+    // Allow Control UI without device identity (for HTTP/non-localhost access)
+    if (!config.gateway.controlUi) config.gateway.controlUi = {};
+    config.gateway.controlUi.dangerouslyDisableDeviceAuth = true;
+    config.gateway.controlUi.allowInsecureAuth = true;
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
     console.log('Config updated successfully');
   "
