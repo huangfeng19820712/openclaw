@@ -7,9 +7,13 @@
  * 3. 保存设备 token 到 localStorage
  * 4. 刷新页面
  *
+ * 支持 URL token 参数（临时访问）:
+ * - http://gateway:18889/control-ui/?token=xxx&session=main
+ *
  * 使用方式:
  * - 首次配对：http://gateway:18789/control-ui/?inviteCode=xxx&session=main
  * - 已配对后：http://gateway:18789/control-ui/#token=yyy&session=main
+ * - 临时访问：http://gateway:18789/control-ui/?token=zzz&session=main
  */
 
 (function() {
@@ -42,6 +46,71 @@
   function getUrlParam(name) {
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get(name);
+  }
+
+  /**
+   * 处理 URL 中的 gateway token 参数（临时访问）
+   * 将 token 保存到 sessionStorage，与 Control UI 原生格式一致
+   */
+  function handleGatewayTokenParam() {
+    const tokenParam = getUrlParam('token');
+    if (!tokenParam) {
+      return false;
+    }
+
+    log('Gateway token parameter detected');
+
+    try {
+      // 获取当前 gateway URL
+      const configuredBasePath = typeof window !== 'undefined' && window.__OPENCLAW_CONTROL_UI_BASE_PATH__
+        ? window.__OPENCLAW_CONTROL_UI_BASE_PATH__.trim()
+        : '';
+      const basePath = configuredBasePath || inferBasePathFromPathname(window.location.pathname);
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const gatewayUrl = `${protocol}//${location.host}${basePath}`;
+
+      // 构建 token storage key（与 storage.ts 逻辑一致）
+      const normalizeScope = (url) => {
+        try {
+          const parsed = new URL(url);
+          const pathname = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '');
+          return `${parsed.protocol}//${parsed.host}${pathname}`;
+        } catch {
+          return url;
+        }
+      };
+      const tokenSessionKeyPrefix = 'openclaw.control.token.v1:';
+      const tokenSessionKey = `${tokenSessionKeyPrefix}${normalizeScope(gatewayUrl)}`;
+
+      // 保存到 sessionStorage
+      sessionStorage.setItem(tokenSessionKey, tokenParam.trim());
+      log('Gateway token saved to sessionStorage:', tokenSessionKey);
+
+      // 清理 URL 中的 token 参数（安全考虑）
+      const url = new URL(window.location.href);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.toString());
+      log('Token parameter removed from URL');
+
+      return true;
+    } catch (err) {
+      logError('Failed to handle gateway token:', err);
+      return false;
+    }
+  }
+
+  /**
+   * 从 URL pathname 推断 basePath（辅助函数）
+   */
+  function inferBasePathFromPathname(pathname) {
+    if (!pathname || pathname === '/' || pathname === '/ui/' || pathname === '/control-ui/') {
+      return '/';
+    }
+    const match = pathname.match(/^\/(?:control-ui|ui)(\/|$)/);
+    if (match) {
+      return pathname.split(match[0])[0] + '/';
+    }
+    return '/';
   }
 
   /**
@@ -228,7 +297,17 @@
 
     log('=== Auto-pair script started ===');
 
-    // 获取 URL 参数
+    // 1. 首先处理 gateway token 参数（临时访问）
+    if (handleGatewayTokenParam()) {
+      log('Gateway token handled, page will use it for authentication');
+      // 刷新页面以应用 token
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+      return;
+    }
+
+    // 2. 获取 inviteCode 参数
     inviteCode = getUrlParam('inviteCode');
 
     // 没有 inviteCode，直接返回
