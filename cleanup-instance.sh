@@ -46,6 +46,9 @@ NC='\033[0m' # No Color
 BASE_DIR="${OPENCLAW_BASE_DIR:-$HOME/.openclaw}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# 支持多实例部署目录结构（与 docker-instance-setup.sh 保持一致）
+OPENCLAW_INSTANCE_BASE_DIR="${OPENCLAW_INSTANCE_BASE_DIR:-/data/openclaw/openclaw_instances/}"
+
 # 选项
 KEEP_DATA=false
 FORCE=false
@@ -95,12 +98,37 @@ confirm() {
 # 获取所有实例 ID
 get_all_instances() {
   local instances=()
+
+  # 检查多实例部署目录结构（/data/openclaw/openclaw_instances/）
+  if [[ -d "$OPENCLAW_INSTANCE_BASE_DIR" ]]; then
+    for dir in "$OPENCLAW_INSTANCE_BASE_DIR"*/; do
+      if [[ -d "$dir" ]]; then
+        local instance_id
+        instance_id="$(basename "$dir")"
+        if [[ -n "$instance_id" ]]; then
+          instances+=("$instance_id")
+        fi
+      fi
+    done
+  fi
+
+  # 检查默认目录结构（~/.openclaw-*）
   for dir in "$BASE_DIR"-*/; do
     if [[ -d "$dir" ]]; then
       local instance_id
       instance_id="$(basename "$dir" | sed "s/^$(basename "$BASE_DIR")-//")"
       if [[ -n "$instance_id" && "$instance_id" != "$(basename "$BASE_DIR")" ]]; then
-        instances+=("$instance_id")
+        # 避免重复添加
+        local already_added=false
+        for existing in "${instances[@]}"; do
+          if [[ "$existing" == "$instance_id" ]]; then
+            already_added=true
+            break
+          fi
+        done
+        if [[ "$already_added" == false ]]; then
+          instances+=("$instance_id")
+        fi
       fi
     fi
   done
@@ -109,6 +137,23 @@ get_all_instances() {
   if [[ -d "$BASE_DIR" && -d "$BASE_DIR/identity" ]]; then
     if [[ -f "$BASE_DIR/openclaw.json" ]] || [[ -f "$BASE_DIR/.env" ]]; then
       instances=("default" "${instances[@]}")
+    fi
+  fi
+
+  # 检查多实例部署目录中的 default 实例
+  if [[ -d "$OPENCLAW_INSTANCE_BASE_DIR"default ]]; then
+    if [[ -f "$OPENCLAW_INSTANCE_BASE_DIR"default/openclaw.json ]] || [[ -f "$OPENCLAW_INSTANCE_BASE_DIR"default/.env ]]; then
+      # 如果没有 default 实例，添加
+      local has_default=false
+      for existing in "${instances[@]}"; do
+        if [[ "$existing" == "default" ]]; then
+          has_default=true
+          break
+        fi
+      done
+      if [[ "$has_default" == false ]]; then
+        instances=("default" "${instances[@]}")
+      fi
     fi
   fi
 
@@ -122,6 +167,13 @@ get_all_instances() {
 # 检查实例是否存在
 instance_exists() {
   local instance_id="$1"
+
+  # 检查多实例部署目录结构
+  if [[ -d "$OPENCLAW_INSTANCE_BASE_DIR$instance_id" ]]; then
+    return 0
+  fi
+
+  # 检查默认目录结构
   if [[ "$instance_id" == "default" ]]; then
     [[ -d "$BASE_DIR" ]]
   else
@@ -137,6 +189,12 @@ get_config_dir() {
   if [[ "$CUSTOM_DIR" == true && -n "${OPENCLAW_CONFIG_DIR:-}" ]]; then
     # 从 OPENCLAW_CONFIG_DIR 派生出 workspace 目录
     echo "${OPENCLAW_CONFIG_DIR}"
+    return
+  fi
+
+  # 优先检查多实例部署目录结构
+  if [[ -d "$OPENCLAW_INSTANCE_BASE_DIR$instance_id" ]]; then
+    echo "$OPENCLAW_INSTANCE_BASE_DIR$instance_id"
     return
   fi
 
