@@ -118,19 +118,11 @@ if [ -L "$EXTENSIONS_DIR/node-auto-register" ] || [ -d "$EXTENSIONS_DIR/node-aut
   rm -rf "$EXTENSIONS_DIR/node-auto-register"
 fi
 
-# 创建符号链接（推荐）或复制文件
-# 使用符号链接可以避免重复拷贝，保持与 workspace 同步
-log_info "创建符号链接到 workspace 中的插件..."
-ln -sf "${WORKSPACE_DIR}/plugins/node-auto-register" "$EXTENSIONS_DIR/node-auto-register"
+# 拷贝插件代码（直接复制，不使用符号链接，因为容器内无法访问外部路径）
+log_info "复制插件代码到 extensions 目录..."
+cp -r "$PLUGIN_DIR" "$EXTENSIONS_DIR/node-auto-register"
 
-# 验证符号链接
-if [ -L "$EXTENSIONS_DIR/node-auto-register" ]; then
-  LINK_TARGET=$(readlink "$EXTENSIONS_DIR/node-auto-register")
-  log_info "符号链接创建成功：$EXTENSIONS_DIR/node-auto-register -> $LINK_TARGET"
-else
-  log_error "符号链接创建失败"
-  exit 1
-fi
+log_info "插件代码复制完成"
 
 echo ""
 
