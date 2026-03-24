@@ -49,7 +49,7 @@ Node Auto-Register 插件拷贝到 extensions 目录脚本
 
 说明:
   此脚本将插件从 /data/workspace/openclaw/plugins/node-auto-register
-  拷贝到 /data/openclaw/openclaw_instances/<container_id>/.openclaw/extensions/
+  拷贝到 /data/openclaw/openclaw_instances/<container_id>/extensions/
 
 EOF
 }
@@ -68,7 +68,7 @@ fi
 
 INSTANCE_ID="$1"
 CONFIG_DIR="${INSTANCE_BASE_DIR}/${INSTANCE_ID}"
-EXTENSIONS_DIR="${CONFIG_DIR}/.openclaw/extensions"
+EXTENSIONS_DIR="${CONFIG_DIR}/extensions"
 
 # 确认配置
 log_header
