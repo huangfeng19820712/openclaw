@@ -22,6 +22,7 @@
   },
   "openclaw": {
     "id": "node-auto-register",
-    "entry": "src/index.js"
+    "entry": "src/index.js",
+    "extensions": ["node-auto-register"]
   }
 }
