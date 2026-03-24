@@ -7,28 +7,41 @@
 #   - 支持跳过交互式 onboarding（快速启动 gateway）
 #   - 支持跳过镜像构建（多实例复用已构建镜像）
 #   - 支持生成新 token（通过 NEW_TOKEN）
+#   - 支持自动端口分配（检测到端口偏移）
 #   - 移除邀请码相关功能，使用简单的 token 认证
 #
 # 使用方式：
-#   # 多实例部署（只需指定实例名）
-#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_NO_ONBOARD=true ./docker-multi-instance-setup.sh
+#   # 多实例部署（手动指定端口偏移）
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_PORT_OFFSET=100 OPENCLAW_NO_ONBOARD=true ./docker-instance-setup.sh
+#
+#   # 多实例部署（自动分配端口偏移，根据实例 ID 自动计算）
+#   OPENCLAW_INSTANCE_ID=gw2 OPENCLAW_NO_ONBOARD=true ./docker-instance-setup.sh
+#   # 或
+#   ./docker-instance-setup.sh gw2
 #
 #   # 多实例部署（跳过镜像构建，复用已构建的镜像）
 #   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_NO_ONBOARD=true OPENCLAW_SKIP_BUILD=true \
-#     ./docker-multi-instance-setup.sh
+#     ./docker-instance-setup.sh
 #
 #   # 重新部署并生成新 token
-#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_NEW_TOKEN=true ./docker-multi-instance-setup.sh
+#   OPENCLAW_INSTANCE_ID=gw1 OPENCLAW_NEW_TOKEN=true ./docker-instance-setup.sh
 #
 # 环境变量：
 #   OPENCLAW_INSTANCE_ID       - 实例标识，默认：default
 #   OPENCLAW_INSTANCE_BASE_DIR - 实例基础目录，默认：/data/openclaw/openclaw_instances/
-#   OPENCLAW_PORT_OFFSET       - 端口偏移量，默认：0（Gateway 端口 = 18789 + offset）
+#   OPENCLAW_PORT_OFFSET       - 端口偏移量，默认：自动分配（Gateway 端口 = 18789 + offset）
 #   OPENCLAW_NO_ONBOARD        - 是否跳过 onboarding，默认：false
 #   OPENCLAW_SKIP_BUILD        - 是否跳过镜像构建，默认：false
 #   OPENCLAW_NEW_TOKEN         - 是否生成新 token，默认：false
 #   OPENCLAW_IMAGE             - Docker 镜像名，默认：openclaw:local
 #   OPENCLAW_GATEWAY_BIND      - 网关绑定地址，默认：lan（可选：lan/loopback）
+#
+# 命令行参数：
+#   <instance_id>    - 实例 ID（如 gw1, gw2, gw3）
+#   --no-onboard     - 跳过 onboarding
+#   --skip-build     - 跳过镜像构建
+#   --new-token      - 生成新 token
+#   --auto-port      - 强制自动分配端口偏移
 # =============================================================================
 set -euo pipefail
 
@@ -43,12 +56,29 @@ IMAGE_NAME="${OPENCLAW_IMAGE:-openclaw:local}"
 # -----------------------------------------------------------------------------
 # 多实例支持配置
 # -----------------------------------------------------------------------------
-INSTANCE_ID="${OPENCLAW_INSTANCE_ID:-default}"
-PORT_OFFSET="${OPENCLAW_PORT_OFFSET:-0}"
-NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-false}"
-SKIP_BUILD="${OPENCLAW_SKIP_BUILD:-false}"
-NEW_TOKEN="${OPENCLAW_NEW_TOKEN:-false}"
-GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-lan}"
+# 默认值
+: "${OPENCLAW_INSTANCE_ID:=}"
+: "${OPENCLAW_PORT_OFFSET:=}"
+: "${OPENCLAW_NO_ONBOARD:=false}"
+: "${OPENCLAW_SKIP_BUILD:=false}"
+: "${OPENCLAW_NEW_TOKEN:=false}"
+: "${OPENCLAW_GATEWAY_BIND:=lan}"
+
+# 如果命令行第一个参数不是选项，作为实例 ID
+if [[ -n "${1:-}" && ! "${1}" =~ ^-- ]]; then
+  INSTANCE_ID="$1"
+  echo "INFO: Using instance ID from argument: $INSTANCE_ID"
+elif [[ -n "$OPENCLAW_INSTANCE_ID" ]]; then
+  INSTANCE_ID="$OPENCLAW_INSTANCE_ID"
+else
+  INSTANCE_ID="default"
+fi
+
+PORT_OFFSET="$OPENCLAW_PORT_OFFSET"
+NO_ONBOARD="$OPENCLAW_NO_ONBOARD"
+SKIP_BUILD="$OPENCLAW_SKIP_BUILD"
+NEW_TOKEN="$OPENCLAW_NEW_TOKEN"
+GATEWAY_BIND="$OPENCLAW_GATEWAY_BIND"
 
 # 实例目录配置
 OPENCLAW_INSTANCE_BASE_DIR="${OPENCLAW_INSTANCE_BASE_DIR:-/data/openclaw/openclaw_instances/}"
@@ -68,6 +98,109 @@ fi
 # 支持 --new-token 命令行参数
 if [[ "${1:-}" == "--new-token" ]]; then
   NEW_TOKEN=true
+fi
+
+# 支持 --auto-port 命令行参数或使用实例 ID 自动分配端口
+if [[ "${1:-}" == "--auto-port" ]] || [[ -z "$PORT_OFFSET" && "$INSTANCE_ID" =~ ^[a-zA-Z]+[0-9]+$ ]]; then
+  # 自动检测已用端口并分配
+  detect_port_offset() {
+    local max_offset=0
+
+    # 1. 从运行中的 docker 容器检测已用端口
+    local projects
+    projects=$(docker ps --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null | grep "^openclaw-" || true)
+    for project in $projects; do
+      # 获取容器的端口映射
+      local container_id
+      container_id=$(docker ps -q --filter "label=com.docker.compose.project=$project" | head -1)
+      if [[ -n "$container_id" ]]; then
+        local ports
+        ports=$(docker port "$container_id" 2>/dev/null || true)
+        if [[ -n "$ports" ]]; then
+          # 从端口映射中提取 host port (容器端口 18789 映射到宿主机端口)
+          local host_port
+          host_port=$(echo "$ports" | grep ":18789" | cut -d':' -f2 | head -1)
+          if [[ -n "$host_port" ]]; then
+            local offset=$((host_port - 18789))
+            if [[ "$offset" -gt "$max_offset" ]]; then
+              max_offset="$offset"
+            fi
+          fi
+        fi
+      fi
+    done
+
+    # 2. 从配置目录检测已用实例
+    if [[ -d "$OPENCLAW_INSTANCE_BASE_DIR" ]]; then
+      for dir in "$OPENCLAW_INSTANCE_BASE_DIR"*/; do
+        if [[ -d "$dir" ]]; then
+          local instance_dir
+          instance_dir="$(basename "$dir")"
+          # 跳过当前实例
+          if [[ "$instance_dir" == "$INSTANCE_ID" ]]; then
+            continue
+          fi
+          local env_file="$dir/.env"
+          if [[ -f "$env_file" ]]; then
+            local port
+            port=$(grep "^OPENCLAW_GATEWAY_PORT=" "$env_file" 2>/dev/null | cut -d'=' -f2-)
+            if [[ -n "$port" ]]; then
+              local offset=$((port - 18789))
+              if [[ "$offset" -gt "$max_offset" ]]; then
+                max_offset="$offset"
+              fi
+            fi
+          fi
+        fi
+      done
+    fi
+
+    # 3. 从脚本目录的 .env 文件检测（多实例部署时 .env 可能被覆盖）
+    # 检查是否有其他实例的 PORT_OFFSET 配置
+    if [[ -f "$ROOT_DIR/.env" ]]; then
+      local env_port
+      env_port=$(grep "^OPENCLAW_GATEWAY_PORT=" "$ROOT_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
+      if [[ -n "$env_port" ]]; then
+        local offset=$((env_port - 18789))
+        # 只有当 offset 大于当前 max_offset 时才更新
+        if [[ "$offset" -gt "$max_offset" ]]; then
+          # 检查是否有多个实例使用相同端口（.env 被覆盖的情况）
+          # 通过检查配置目录来确认实际使用的端口
+          local has_higher_port=false
+          for dir in "$OPENCLAW_INSTANCE_BASE_DIR"*/; do
+            if [[ -d "$dir" ]]; then
+              local dir_env="$dir/.env"
+              if [[ -f "$dir_env" ]]; then
+                local dir_port
+                dir_port=$(grep "^OPENCLAW_GATEWAY_PORT=" "$dir_env" 2>/dev/null | cut -d'=' -f2-)
+                if [[ -n "$dir_port" ]]; then
+                  local dir_offset=$((dir_port - 18789))
+                  if [[ "$dir_offset" -gt "$max_offset" ]]; then
+                    max_offset="$dir_offset"
+                    has_higher_port=true
+                  fi
+                fi
+              fi
+            fi
+          done
+          # 如果配置目录没有更高的端口，检查运行中的容器
+          if [[ "$has_higher_port" == false ]]; then
+            if [[ "$offset" -gt "$max_offset" ]]; then
+              max_offset="$offset"
+            fi
+          fi
+        fi
+      fi
+    fi
+
+    # 返回下一个可用偏移（+100 递增）
+    echo "$((max_offset + 100))"
+  }
+
+  if [[ -z "$PORT_OFFSET" ]]; then
+    PORT_OFFSET="$(detect_port_offset)"
+    echo "INFO: Auto-detected port offset: $PORT_OFFSET (Gateway port: $((18789 + PORT_OFFSET)))"
+  fi
 fi
 
 # =============================================================================
@@ -191,6 +324,8 @@ fi
 # =============================================================================
 
 export COMPOSE_PROJECT_NAME="openclaw-${INSTANCE_ID}"
+# 确保 PORT_OFFSET 有默认值
+PORT_OFFSET="${PORT_OFFSET:-0}"
 export OPENCLAW_GATEWAY_PORT="$((18789 + PORT_OFFSET))"
 export OPENCLAW_BRIDGE_PORT="$((18790 + PORT_OFFSET))"
 export OPENCLAW_GATEWAY_BIND="$GATEWAY_BIND"
