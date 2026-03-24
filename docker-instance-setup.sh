@@ -29,7 +29,7 @@
 # 环境变量：
 #   OPENCLAW_INSTANCE_ID       - 实例标识，默认：default
 #   OPENCLAW_INSTANCE_BASE_DIR - 实例基础目录，默认：/data/openclaw/openclaw_instances/
-#   OPENCLAW_PORT_OFFSET       - 端口偏移量，默认：自动分配（Gateway 端口 = 18789 + offset）
+#   OPENCLAW_PORT_OFFSET       - 端口偏移量，默认：自动分配（Gateway 端口 = 18789 + offsni et）
 #   OPENCLAW_NO_ONBOARD        - 是否跳过 onboarding，默认：false
 #   OPENCLAW_SKIP_BUILD        - 是否跳过镜像构建，默认：false
 #   OPENCLAW_NEW_TOKEN         - 是否生成新 token，默认：false
@@ -88,6 +88,12 @@ OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-${OPENCLAW_INSTANCE_BASE_DIR}$
 # 支持 --no-onboard 命令行参数
 if [[ "${1:-}" == "--no-onboard" ]]; then
   NO_ONBOARD=true
+fi
+
+# 当使用命令行参数指定实例 ID 时，自动启用 NO_ONBOARD 模式
+if [[ -n "${1:-}" && ! "${1}" =~ ^-- ]]; then
+  NO_ONBOARD=true
+  echo "INFO: NO_ONBOARD mode enabled for argument-based deployment"
 fi
 
 # 支持 --skip-build 命令行参数
@@ -306,6 +312,12 @@ mkdir -p "$OPENCLAW_WORKSPACE_DIR"
 mkdir -p "$OPENCLAW_CONFIG_DIR/identity"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/agent"
 mkdir -p "$OPENCLAW_CONFIG_DIR/agents/main/sessions"
+
+# 修复配置目录权限，允许容器内 node 用户 (uid 1000) 写入
+if command -v docker >/dev/null 2>&1; then
+  docker run --rm -v "$OPENCLAW_CONFIG_DIR:/config" --user root alpine sh -c \
+    "find /config -xdev -exec chown 1000:1000 {} + 2>/dev/null || true"
+fi
 
 # 创建 .bashrc 文件
 bashrc_file="$OPENCLAW_CONFIG_DIR/.bashrc"
