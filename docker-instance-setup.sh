@@ -161,44 +161,6 @@ if [[ "${1:-}" == "--auto-port" ]] || [[ -z "$PORT_OFFSET" && "$INSTANCE_ID" =~ 
       done
     fi
 
-    # 3. 从脚本目录的 .env 文件检测（多实例部署时 .env 可能被覆盖）
-    # 检查是否有其他实例的 PORT_OFFSET 配置
-    if [[ -f "$ROOT_DIR/.env" ]]; then
-      local env_port
-      env_port=$(grep "^OPENCLAW_GATEWAY_PORT=" "$ROOT_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
-      if [[ -n "$env_port" ]]; then
-        local offset=$((env_port - 18789))
-        # 只有当 offset 大于当前 max_offset 时才更新
-        if [[ "$offset" -gt "$max_offset" ]]; then
-          # 检查是否有多个实例使用相同端口（.env 被覆盖的情况）
-          # 通过检查配置目录来确认实际使用的端口
-          local has_higher_port=false
-          for dir in "$OPENCLAW_INSTANCE_BASE_DIR"*/; do
-            if [[ -d "$dir" ]]; then
-              local dir_env="$dir/.env"
-              if [[ -f "$dir_env" ]]; then
-                local dir_port
-                dir_port=$(grep "^OPENCLAW_GATEWAY_PORT=" "$dir_env" 2>/dev/null | cut -d'=' -f2-)
-                if [[ -n "$dir_port" ]]; then
-                  local dir_offset=$((dir_port - 18789))
-                  if [[ "$dir_offset" -gt "$max_offset" ]]; then
-                    max_offset="$dir_offset"
-                    has_higher_port=true
-                  fi
-                fi
-              fi
-            fi
-          done
-          # 如果配置目录没有更高的端口，检查运行中的容器
-          if [[ "$has_higher_port" == false ]]; then
-            if [[ "$offset" -gt "$max_offset" ]]; then
-              max_offset="$offset"
-            fi
-          fi
-        fi
-      fi
-    fi
-
     # 返回下一个可用偏移（+100 递增）
     echo "$((max_offset + 100))"
   }
