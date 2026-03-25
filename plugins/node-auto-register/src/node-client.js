@@ -86,8 +86,8 @@ export class NodeClient {
       this.connected = true;
       this.reconnectAttempts = 0;
 
-      // 发送认证消息
-      this.sendAuth();
+      // 发送 connect.hello 帧
+      this.sendConnectHello();
     });
 
     this.ws.on('message', (data) => {
@@ -106,33 +106,29 @@ export class NodeClient {
   }
 
   /**
-   * 发送认证消息
+   * 发送 connect.hello 帧（认证）
    */
-  sendAuth() {
-    const authMessage = {
-      type: 'connect.answer',
+  sendConnectHello() {
+    const helloMessage = {
+      type: 'connect.hello',
       payload: {
-        auth: {
-          version: 1,
-          deviceId: this.deviceId || 'auto-generated-' + Date.now(),
-          tokens: {
-            operator: {
-              token: this.deviceToken,
-              role: 'operator',
-              scopes: ['control'],
-              updatedAtMs: Date.now(),
-            },
-          },
-        },
-        clientInfo: {
+        minProtocol: 1,
+        maxProtocol: 1,
+        client: {
+          id: this.deviceId || 'node-' + Date.now(),
           displayName: this.displayName,
-          clientType: 'node',
+          version: '1.0.0',
+          platform: process.platform,
+          mode: 'node',
+        },
+        auth: {
+          deviceToken: this.deviceToken,
         },
       },
     };
 
-    console.log('[NodeClient] Sending authentication...');
-    this.ws.send(JSON.stringify(authMessage));
+    console.log('[NodeClient] Sending connect.hello...');
+    this.ws.send(JSON.stringify(helloMessage));
   }
 
   /**
