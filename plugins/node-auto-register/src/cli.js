@@ -63,6 +63,9 @@ program
       console.log(`  Device Token: ${result.deviceToken}`);
       console.log(`  Role:         ${result.role}`);
       console.log(`  DisplayName:  ${result.displayName}`);
+      if (result.publicKey) {
+        console.log(`  PublicKey:    ${result.publicKey.substring(0, 16)}...`);
+      }
       console.log();
 
       if (options.dryRun) {
@@ -87,6 +90,8 @@ program
         deviceId: result.deviceId,
         displayName: options.name,
         maxReconnectAttempts: parseInt(options.maxReconnect, 10),
+        publicKey: result.publicKey,
+        privateKey: result.privateKey,
       });
 
       // 处理退出信号

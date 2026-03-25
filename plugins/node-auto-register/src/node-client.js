@@ -8,6 +8,21 @@
  */
 
 import WebSocket from 'ws';
+import { createSign, randomUUID } from 'crypto';
+
+/**
+ * Base64URL 解码
+ */
+function base64UrlDecode(input) {
+  const normalized = input.replaceAll('-', '+').replaceAll('_', '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
 
 /**
  * NodeClient - OpenClaw 节点客户端
@@ -24,6 +39,9 @@ export class NodeClient {
     this.reconnectAttempts = 0;
     this.ws = null;
     this.connected = false;
+    // 设备身份（用于签名验证）
+    this.publicKey = options.publicKey || null;
+    this.privateKey = options.privateKey || null;
   }
 
   /**
@@ -109,6 +127,34 @@ export class NodeClient {
    * 发送 connect 请求帧（握手）
    */
   sendConnectRequest() {
+    const now = Date.now();
+    const nonce = randomUUID();
+
+    // 构建设备签名载荷（与 gateway 的 buildDeviceAuthPayloadV3 一致）
+    const payload = {
+      d: this.deviceId,
+      c: 'node-host',
+      m: 'node',
+      r: 'node',
+      s: [],
+      t: this.deviceToken,
+      n: nonce,
+      p: process.platform,
+      ts: now,
+    };
+    const payloadStr = JSON.stringify(payload);
+
+    // 使用私钥签名
+    const privateKeyBytes = base64UrlDecode(this.privateKey);
+    const sign = createSign('SHA256');
+    sign.update(payloadStr);
+    sign.end();
+    const signature = sign.sign({
+      key: privateKeyBytes,
+      format: 'der',
+      type: 'pkcs8',
+    }, 'base64url');
+
     const connectMessage = {
       type: 'req',
       id: 'connect-' + Date.now(),
@@ -123,13 +169,20 @@ export class NodeClient {
           platform: process.platform,
           mode: 'node',
         },
+        device: {
+          id: this.deviceId,
+          publicKey: this.publicKey,
+          signature: signature,
+          signedAt: now,
+          nonce: nonce,
+        },
         auth: {
           deviceToken: this.deviceToken,
         },
       },
     };
 
-    console.log('[NodeClient] Sending connect request...');
+    console.log('[NodeClient] Sending connect request with device identity...');
     this.ws.send(JSON.stringify(connectMessage));
   }
 
