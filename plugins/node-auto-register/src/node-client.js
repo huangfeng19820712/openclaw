@@ -114,8 +114,8 @@ export class NodeClient {
       id: 'connect-' + Date.now(),
       method: 'connect',
       params: {
-        minProtocol: 1,
-        maxProtocol: 1,
+        minProtocol: 3,
+        maxProtocol: 3,
         client: {
           id: 'node-host',
           displayName: this.displayName,
