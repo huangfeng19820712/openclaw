@@ -16,12 +16,52 @@ import { randomUUID, sign } from 'crypto';
 function base64UrlDecode(input) {
   const normalized = input.replaceAll('-', '+').replaceAll('_', '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
-  const binary = atob(padded);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    out[i] = binary.charCodeAt(i);
-  }
-  return out;
+  return Buffer.from(padded, 'base64');
+}
+
+/**
+ * Base64URL 编码
+ */
+function base64UrlEncode(buf) {
+  return buf.toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
+}
+
+/**
+ * ED25519 SPKI 前缀（用于从原始公钥构建 PEM）
+ */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+/**
+ * PKCS8 前缀（用于从原始私钥构建 PEM）
+ */
+const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
+
+/**
+ * 将原始公钥字节转换为 SPKI PEM 格式
+ */
+function publicKeyBytesToPem(publicKeyBytes) {
+  const spkiDer = Buffer.concat([ED25519_SPKI_PREFIX, publicKeyBytes]);
+  const pem = spkiDer.toString('base64').match(/.{1,64}/g).join('\n');
+  return '-----BEGIN PUBLIC KEY-----\n' + pem + '\n-----END PUBLIC KEY-----';
+}
+
+/**
+ * 将原始私钥字节转换为 PKCS8 PEM 格式
+ */
+function privateKeyBytesToPem(privateKeyBytes) {
+  const pkcs8Der = Buffer.concat([ED25519_PKCS8_PREFIX, privateKeyBytes]);
+  const pem = pkcs8Der.toString('base64').match(/.{1,64}/g).join('\n');
+  return '-----BEGIN PRIVATE KEY-----\n' + pem + '\n-----END PRIVATE KEY-----';
+}
+
+/**
+ * 使用私钥对载荷进行签名（ed25519）
+ */
+function signDevicePayload(privateKeyPem, payload) {
+  const crypto = require('crypto');
+  const key = crypto.createPrivateKey(privateKeyPem);
+  const sig = crypto.sign(null, Buffer.from(payload, 'utf8'), key);
+  return base64UrlEncode(sig);
 }
 
 /**
@@ -143,12 +183,13 @@ export class NodeClient {
       ts: now,
     };
     const payloadStr = JSON.stringify(payload);
-    const payloadBytes = Buffer.from(payloadStr);
 
-    // 使用私钥签名（ed25519）
+    // 将原始私钥字节转换为 PEM 格式
     const privateKeyBytes = base64UrlDecode(this.privateKey);
-    const signatureBuf = sign(null, payloadBytes, privateKeyBytes);
-    const signature = signatureBuf.toString('base64url');
+    const privateKeyPem = privateKeyBytesToPem(privateKeyBytes);
+
+    // 使用私钥签名
+    const signature = signDevicePayload(privateKeyPem, payloadStr);
 
     const connectMessage = {
       type: 'req',
