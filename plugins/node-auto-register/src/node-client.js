@@ -81,6 +81,8 @@ export class NodeClient {
     // 设备身份（用于签名验证）
     this.publicKey = options.publicKey || null;
     this.privateKey = options.privateKey || null;
+    // 服务器提供的 nonce（用于签名）
+    this.connectNonce = null;
   }
 
   /**
@@ -142,9 +144,7 @@ export class NodeClient {
       console.log('[NodeClient] WebSocket connected');
       this.connected = true;
       this.reconnectAttempts = 0;
-
-      // 发送 connect 请求
-      this.sendConnectRequest();
+      // 等待 connect.challenge 事件
     });
 
     this.ws.on('message', (data) => {
@@ -166,8 +166,13 @@ export class NodeClient {
    * 发送 connect 请求帧（握手）
    */
   sendConnectRequest() {
+    if (!this.connectNonce) {
+      console.error('[NodeClient] Cannot send connect request without nonce');
+      return;
+    }
+
     const now = Date.now();
-    const nonce = randomUUID();
+    const nonce = this.connectNonce;
 
     // 构建设备签名载荷（与 gateway 的 buildDeviceAuthPayloadV3 一致）
     const payload = {
@@ -228,6 +233,14 @@ export class NodeClient {
     try {
       const msg = JSON.parse(message);
       console.log('[NodeClient] Received:', msg.type);
+
+      // 处理 connect.challenge 事件
+      if (msg.type === 'event' && msg.event === 'connect.challenge') {
+        this.connectNonce = msg.payload?.nonce;
+        console.log('[NodeClient] Received connect challenge, nonce:', this.connectNonce?.substring(0, 8) + '...');
+        this.sendConnectRequest();
+        return;
+      }
 
       switch (msg.type) {
         case 'connect.request':
