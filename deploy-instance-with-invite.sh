@@ -117,11 +117,18 @@ log_step "步骤 1/3: 部署容器实例 '$INSTANCE_ID'..."
 log_header
 
 # 使用 --auto-port 参数自动分配可用端口
+# 添加 || true 防止部署失败时脚本直接退出
 DEPLOY_OUTPUT=$(OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
 OPENCLAW_NO_ONBOARD=true \
-  bash "$INSTANCE_SETUP_SCRIPT" --auto-port 2>&1)
+  bash "$INSTANCE_SETUP_SCRIPT" --auto-port 2>&1) || true
 
 echo "$DEPLOY_OUTPUT"
+
+# 检查部署是否成功
+if echo "$DEPLOY_OUTPUT" | grep -qi "error\|failed\|cannot\|unable"; then
+  log_error "部署失败，请检查上述错误信息"
+  exit 1
+fi
 
 # 从输出中提取端口偏移和 Gateway 端口
 PORT_OFFSET=$(echo "$DEPLOY_OUTPUT" | grep -oP 'Auto-detected port offset: \K[0-9]+' || echo "")
