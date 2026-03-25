@@ -8,7 +8,7 @@
  */
 
 import WebSocket from 'ws';
-import { createSign, randomUUID } from 'crypto';
+import { randomUUID, sign } from 'crypto';
 
 /**
  * Base64URL 解码
@@ -143,17 +143,12 @@ export class NodeClient {
       ts: now,
     };
     const payloadStr = JSON.stringify(payload);
+    const payloadBytes = Buffer.from(payloadStr);
 
     // 使用私钥签名（ed25519）
     const privateKeyBytes = base64UrlDecode(this.privateKey);
-    const sign = createSign('SHA256');
-    sign.update(payloadStr);
-    sign.end();
-    const signature = sign.sign({
-      key: privateKeyBytes,
-      format: 'der',
-      type: 'raw',
-    }, 'base64url');
+    const signatureBuf = sign(null, payloadBytes, privateKeyBytes);
+    const signature = signatureBuf.toString('base64url');
 
     const connectMessage = {
       type: 'req',
