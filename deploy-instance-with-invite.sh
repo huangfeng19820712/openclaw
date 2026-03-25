@@ -116,8 +116,15 @@ log_header
 log_step "步骤 1/3: 部署容器实例 '$INSTANCE_ID'..."
 log_header
 
+# 先清理可能存在的残留容器（如果上次部署失败）
+EXISTING_CONTAINER=$(docker ps -aq --filter "name=openclaw-${INSTANCE_ID}-openclaw-gateway" 2>/dev/null || true)
+if [[ -n "$EXISTING_CONTAINER" ]]; then
+  log_warn "发现残留容器，正在清理..."
+  docker rm -f "$EXISTING_CONTAINER" >/dev/null 2>&1 || true
+fi
+
 # 使用 --auto-port 参数自动分配可用端口
-# 添加 || true 防止部署失败时脚本直接退出
+# 添加 || true 防止 docker-instance-setup.sh 失败时脚本直接退出
 DEPLOY_OUTPUT=$(OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
 OPENCLAW_NO_ONBOARD=true \
   bash "$INSTANCE_SETUP_SCRIPT" --auto-port 2>&1) || true
@@ -125,7 +132,7 @@ OPENCLAW_NO_ONBOARD=true \
 echo "$DEPLOY_OUTPUT"
 
 # 检查部署是否成功
-if echo "$DEPLOY_OUTPUT" | grep -qi "error\|failed\|cannot\|unable"; then
+if echo "$DEPLOY_OUTPUT" | grep -qi "error\|failed\|cannot\|unable\|Bind for.*failed"; then
   log_error "部署失败，请检查上述错误信息"
   exit 1
 fi
