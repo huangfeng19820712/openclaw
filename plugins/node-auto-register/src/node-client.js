@@ -209,18 +209,18 @@ export class NodeClient {
     const nonce = this.connectNonce;
 
     // 构建设备签名载荷（使用 V3 格式）
-    // 注意：使用 operator 角色，因为 one-shot-pair API 返回的是 operator 角色
+    // 注意：使用 openclaw-control-ui 和 webchat 模式，与 one-shot-pair API 创建的设备信息一致
     const payloadStr = buildDeviceAuthPayloadV3({
       deviceId: this.deviceId,
-      clientId: 'node-host',
-      clientMode: 'node',
+      clientId: 'openclaw-control-ui',
+      clientMode: 'webchat',
       role: 'operator',
       scopes: ['control'],
       signedAtMs: now,
       token: this.deviceToken,
       nonce: nonce,
       platform: process.platform,
-      deviceFamily: null,
+      deviceFamily: 'browser',
     });
 
     // 将原始私钥字节转换为 PEM 格式
@@ -238,11 +238,12 @@ export class NodeClient {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: 'node-host',
+          id: 'openclaw-control-ui',
           displayName: this.displayName,
           version: '1.0.0',
           platform: process.platform,
-          mode: 'node',
+          mode: 'webchat',
+          deviceFamily: 'browser',
         },
         device: {
           id: this.deviceId,
