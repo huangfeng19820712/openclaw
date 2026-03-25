@@ -86,8 +86,8 @@ export class NodeClient {
       this.connected = true;
       this.reconnectAttempts = 0;
 
-      // 发送 connect.hello 帧
-      this.sendConnectHello();
+      // 发送 connect 请求
+      this.sendConnectRequest();
     });
 
     this.ws.on('message', (data) => {
@@ -106,12 +106,14 @@ export class NodeClient {
   }
 
   /**
-   * 发送 connect.hello 帧（认证）
+   * 发送 connect 请求帧（握手）
    */
-  sendConnectHello() {
-    const helloMessage = {
-      type: 'connect.hello',
-      payload: {
+  sendConnectRequest() {
+    const connectMessage = {
+      type: 'req',
+      id: 'connect-' + Date.now(),
+      method: 'connect',
+      params: {
         minProtocol: 1,
         maxProtocol: 1,
         client: {
@@ -127,8 +129,8 @@ export class NodeClient {
       },
     };
 
-    console.log('[NodeClient] Sending connect.hello...');
-    this.ws.send(JSON.stringify(helloMessage));
+    console.log('[NodeClient] Sending connect request...');
+    this.ws.send(JSON.stringify(connectMessage));
   }
 
   /**
