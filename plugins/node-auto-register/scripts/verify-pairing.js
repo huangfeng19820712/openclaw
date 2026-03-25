@@ -30,10 +30,33 @@ program
  * 获取 OpenClaw 目录路径
  */
 function getOpenClawDir() {
-  return process.env.OPENCLAW_DIR || path.join(
-    process.env.HOME || process.env.USERPROFILE,
-    '.openclaw'
-  );
+  // 优先使用环境变量
+  if (process.env.OPENCLAW_DIR) {
+    return process.env.OPENCLAW_DIR;
+  }
+
+  // 尝试常见路径
+  const possiblePaths = [
+    '/home/node/.openclaw',  // 容器内路径
+    '/data/openclaw/openclaw_instances/product1',  // 宿主机挂载路径（扁平结构）
+    '/data/openclaw/openclaw_instances/product1/.openclaw',  // 宿主机挂载路径（.openclaw 结构）
+    path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw')
+  ];
+
+  for (const p of possiblePaths) {
+    try {
+      // 检查 invite-codes.json 或 devices 目录是否存在
+      if (fs.existsSync(path.join(p, 'invite-codes.json')) ||
+          fs.existsSync(path.join(p, 'devices'))) {
+        return p;
+      }
+    } catch (e) {
+      // 忽略错误
+    }
+  }
+
+  // 默认返回第一个
+  return path.join(process.env.HOME || process.env.USERPROFILE, '.openclaw');
 }
 
 /**
@@ -99,8 +122,8 @@ function listPairedDevices() {
     console.log(`    Device ID:  ${device.deviceId}`);
     console.log(`    Client:     ${device.clientId} (${device.clientMode})`);
     console.log(`    Role:       ${device.role}`);
-    console.log(`    Platform:   ${device.platform} / ${device.deviceFamily}`);
-    console.log(`    Scopes:     ${device.scopes.join(', ') || 'none'}`);
+    console.log(`    Platform:   ${device.platform || 'unknown'} / ${device.deviceFamily || 'unknown'}`);
+    console.log(`    Scopes:     ${device.scopes ? device.scopes.join(', ') : 'none'}`);
     console.log(`    Created:    ${new Date(device.createdAtMs).toLocaleString()}`);
     if (device.tokens) {
       const firstRole = Object.keys(device.tokens)[0];
