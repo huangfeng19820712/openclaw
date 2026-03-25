@@ -117,7 +117,7 @@ export class NodeClient {
         minProtocol: 1,
         maxProtocol: 1,
         client: {
-          id: this.deviceId || 'node-' + Date.now(),
+          id: 'node-host',
           displayName: this.displayName,
           version: '1.0.0',
           platform: process.platform,
