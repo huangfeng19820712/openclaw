@@ -144,7 +144,7 @@ export class NodeClient {
     };
     const payloadStr = JSON.stringify(payload);
 
-    // 使用私钥签名
+    // 使用私钥签名（ed25519）
     const privateKeyBytes = base64UrlDecode(this.privateKey);
     const sign = createSign('SHA256');
     sign.update(payloadStr);
@@ -152,7 +152,7 @@ export class NodeClient {
     const signature = sign.sign({
       key: privateKeyBytes,
       format: 'der',
-      type: 'pkcs8',
+      type: 'raw',
     }, 'base64url');
 
     const connectMessage = {
