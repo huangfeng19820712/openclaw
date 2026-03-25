@@ -297,13 +297,32 @@ function generateEd25519KeyPair() {
 
 /**
  * 生成虚拟设备信息
+ * @param {Object} options - 选项
+ * @param {string} options.clientType - 客户端类型：'control-ui' 或 'node'
  */
-async function generateVirtualDeviceInfo() {
+async function generateVirtualDeviceInfo(options = {}) {
   const now = Date.now();
   const keyPair = await generateEd25519KeyPair();
+  const clientType = options.clientType || 'control-ui';
 
+  if (clientType === 'node') {
+    return {
+      deviceId: keyPair.deviceId,
+      publicKey: keyPair.publicKey,
+      displayName: 'Auto-Paired Node',
+      platform: 'node',
+      deviceFamily: 'nodejs',
+      clientId: 'node-host',
+      clientMode: 'node',
+      role: 'node',
+      scopes: [],
+      keyPair: keyPair,
+    };
+  }
+
+  // Control UI 默认配置
   return {
-    deviceId: keyPair.deviceId,  // 使用从公钥派生的 deviceId
+    deviceId: keyPair.deviceId,
     publicKey: keyPair.publicKey,
     displayName: 'Auto-Paired Device (Control UI)',
     platform: 'web',
@@ -312,7 +331,6 @@ async function generateVirtualDeviceInfo() {
     clientMode: 'webchat',
     role: 'operator',
     scopes: ['control'],
-    // 新增：返回有效的密钥对供浏览器使用
     keyPair: keyPair,
   };
 }
@@ -342,11 +360,12 @@ async function handleOneShotPair(req, res) {
     return;
   }
 
-  // 解析邀请码
+  // 解析邀请码和客户端类型
   const url = new URL(req.url, 'http://localhost');
   const inviteCode = url.searchParams.get('inviteCode');
+  const clientType = url.searchParams.get('clientType') || 'control-ui';
 
-  console.log('[one-shot-pair] GET request, inviteCode:', inviteCode ? inviteCode.substring(0, 8) + '...' : '(empty)');
+  console.log('[one-shot-pair] GET request, inviteCode:', inviteCode ? inviteCode.substring(0, 8) + '...', 'clientType:', clientType);
 
   if (!inviteCode) {
     console.log('[one-shot-pair] Missing inviteCode parameter');
@@ -376,8 +395,8 @@ async function handleOneShotPair(req, res) {
   }
 
   // 生成虚拟设备信息
-  const deviceInfo = await generateVirtualDeviceInfo();
-  console.log('[one-shot-pair] Generated virtual device:', deviceInfo.deviceId);
+  const deviceInfo = await generateVirtualDeviceInfo({ clientType });
+  console.log('[one-shot-pair] Generated virtual device:', deviceInfo.deviceId, 'clientType:', deviceInfo.clientId, 'mode:', deviceInfo.clientMode);
 
   // 创建配对请求（直接写入 state 文件）
   console.log('[one-shot-pair] Creating pairing request...');

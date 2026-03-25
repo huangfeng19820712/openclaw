@@ -46,7 +46,7 @@ program
     // 步骤 1: 调用 one-shot-pair API 获取设备 token
     console.log('[Step 1/2] Requesting device token via one-shot pair API...');
 
-    const apiUrl = `http://${options.gateway}:${options.port}/plugins/node-auto-register/api/one-shot-pair?inviteCode=${encodeURIComponent(options.inviteCode)}`;
+    const apiUrl = `http://${options.gateway}:${options.port}/plugins/node-auto-register/api/one-shot-pair?inviteCode=${encodeURIComponent(options.inviteCode)}&clientType=node`;
 
     try {
       const response = await fetch(apiUrl);
