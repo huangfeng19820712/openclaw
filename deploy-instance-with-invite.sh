@@ -116,9 +116,23 @@ log_header
 log_step "步骤 1/3: 部署容器实例 '$INSTANCE_ID'..."
 log_header
 
-OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
+# 捕获部署脚本输出以获取端口信息
+DEPLOY_OUTPUT=$(OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
 OPENCLAW_NO_ONBOARD=true \
-  bash "$INSTANCE_SETUP_SCRIPT"
+  bash "$INSTANCE_SETUP_SCRIPT" 2>&1)
+
+echo "$DEPLOY_OUTPUT"
+
+# 从输出中提取端口偏移和 Gateway 端口
+PORT_OFFSET=$(echo "$DEPLOY_OUTPUT" | grep -oP 'Auto-detected port offset: \K[0-9]+' || echo "")
+GATEWAY_PORT=$(echo "$DEPLOY_OUTPUT" | grep -oP 'Gateway port: \K[0-9]+' || echo "")
+
+if [[ -n "$GATEWAY_PORT" ]]; then
+  log_info "自动分配的 Gateway 端口：$GATEWAY_PORT"
+elif [[ -n "$PORT_OFFSET" ]]; then
+  GATEWAY_PORT=$((18789 + PORT_OFFSET))
+  log_info "自动分配的 Gateway 端口：$GATEWAY_PORT (偏移量：$PORT_OFFSET)"
+fi
 
 log_info "容器实例部署完成"
 echo ""
@@ -171,15 +185,17 @@ if [[ -z "$INVITE_CODE" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 获取 Gateway 端口
-# -----------------------------------------------------------------------------
-GATEWAY_PORT=$(docker port "$CONTAINER_NAME" 18789 2>/dev/null | head -1 | cut -d: -f2 || echo "18789")
-if [[ -z "$GATEWAY_PORT" ]]; then
-  GATEWAY_PORT="18789"
-fi
-
 # 获取服务器 IP
+# -----------------------------------------------------------------------------
 SERVER_IP=$(hostname -I | awk '{print $1}' || echo "192.168.90.6")
+
+# 如果没有检测到端口，尝试从 docker port 命令获取
+if [[ -z "$GATEWAY_PORT" ]]; then
+  GATEWAY_PORT=$(docker port "$CONTAINER_NAME" 18789 2>/dev/null | head -1 | cut -d: -f2 || echo "18789")
+  if [[ -z "$GATEWAY_PORT" ]]; then
+    GATEWAY_PORT="18789"
+  fi
+fi
 
 # -----------------------------------------------------------------------------
 # 输出结果
