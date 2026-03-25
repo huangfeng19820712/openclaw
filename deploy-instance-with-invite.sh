@@ -116,15 +116,28 @@ log_header
 log_step "步骤 1/3: 部署容器实例 '$INSTANCE_ID'..."
 log_header
 
-# 先清理可能存在的残留容器（如果上次部署失败）
+# 清理可能存在的残留容器和端口占用
+log_info "清理残留容器和端口占用..."
 EXISTING_CONTAINER=$(docker ps -aq --filter "name=openclaw-${INSTANCE_ID}-openclaw-gateway" 2>/dev/null || true)
 if [[ -n "$EXISTING_CONTAINER" ]]; then
-  log_warn "发现残留容器，正在清理..."
+  docker stop "$EXISTING_CONTAINER" >/dev/null 2>&1 || true
   docker rm -f "$EXISTING_CONTAINER" >/dev/null 2>&1 || true
+  log_info "已清理残留容器：$EXISTING_CONTAINER"
+fi
+
+# 等待端口释放
+sleep 2
+
+# 检测并终止占用端口的 docker-proxy 进程
+GATEWAY_PORT_NUM=$(docker ps --format '{{.Names}}:{{.Ports}}' 2>/dev/null | \
+  grep "openclaw-${INSTANCE_ID}" | \
+  grep -oP '0\.0\.0\.0:\K[0-9]+' | head -1 || echo "")
+if [[ -n "$GATEWAY_PORT_NUM" ]]; then
+  pkill -9 -f "docker-proxy.*:${GATEWAY_PORT_NUM}" 2>/dev/null || true
+  log_info "已清理端口 $GATEWAY_PORT_NUM 的占用进程"
 fi
 
 # 使用 --auto-port 参数自动分配可用端口
-# 添加 || true 防止 docker-instance-setup.sh 失败时脚本直接退出
 DEPLOY_OUTPUT=$(OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
 OPENCLAW_NO_ONBOARD=true \
   bash "$INSTANCE_SETUP_SCRIPT" --auto-port 2>&1) || true
