@@ -8,7 +8,7 @@
  */
 
 import WebSocket from 'ws';
-import { randomUUID, sign } from 'crypto';
+import { randomUUID, sign, createPrivateKey } from 'crypto';
 
 /**
  * Base64URL 解码
@@ -58,9 +58,8 @@ function privateKeyBytesToPem(privateKeyBytes) {
  * 使用私钥对载荷进行签名（ed25519）
  */
 function signDevicePayload(privateKeyPem, payload) {
-  const crypto = require('crypto');
-  const key = crypto.createPrivateKey(privateKeyPem);
-  const sig = crypto.sign(null, Buffer.from(payload, 'utf8'), key);
+  const key = createPrivateKey(privateKeyPem);
+  const sig = sign(null, Buffer.from(payload, 'utf8'), key);
   return base64UrlEncode(sig);
 }
 
