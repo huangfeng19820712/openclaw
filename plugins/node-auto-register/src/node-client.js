@@ -55,6 +55,40 @@ function privateKeyBytesToPem(privateKeyBytes) {
 }
 
 /**
+ * 规范化设备元数据（与 gateway 保持一致）
+ */
+function normalizeDeviceMetadataForAuth(value) {
+  if (!value || typeof value !== 'string') {
+    return '';
+  }
+  const trimmed = value.trim().toLowerCase();
+  return trimmed === '' ? '' : trimmed;
+}
+
+/**
+ * 构建 V3 版本的设备认证载荷（与 gateway 的 buildDeviceAuthPayloadV3 一致）
+ */
+function buildDeviceAuthPayloadV3(params) {
+  const scopes = params.scopes.join(',');
+  const token = params.token || '';
+  const platform = normalizeDeviceMetadataForAuth(params.platform);
+  const deviceFamily = normalizeDeviceMetadataForAuth(params.deviceFamily);
+  return [
+    'v3',
+    params.deviceId,
+    params.clientId,
+    params.clientMode,
+    params.role,
+    scopes,
+    String(params.signedAtMs),
+    token,
+    params.nonce,
+    platform,
+    deviceFamily,
+  ].join('|');
+}
+
+/**
  * 使用私钥对载荷进行签名（ed25519）
  */
 function signDevicePayload(privateKeyPem, payload) {
@@ -174,19 +208,19 @@ export class NodeClient {
     const now = Date.now();
     const nonce = this.connectNonce;
 
-    // 构建设备签名载荷（与 gateway 的 buildDeviceAuthPayloadV3 一致）
-    const payload = {
-      d: this.deviceId,
-      c: 'node-host',
-      m: 'node',
-      r: 'node',
-      s: [],
-      t: this.deviceToken,
-      n: nonce,
-      p: process.platform,
-      ts: now,
-    };
-    const payloadStr = JSON.stringify(payload);
+    // 构建设备签名载荷（使用 V3 格式）
+    const payloadStr = buildDeviceAuthPayloadV3({
+      deviceId: this.deviceId,
+      clientId: 'node-host',
+      clientMode: 'node',
+      role: 'node',
+      scopes: [],
+      signedAtMs: now,
+      token: this.deviceToken,
+      nonce: nonce,
+      platform: process.platform,
+      deviceFamily: null,
+    });
 
     // 将原始私钥字节转换为 PEM 格式
     const privateKeyBytes = base64UrlDecode(this.privateKey);
@@ -223,6 +257,7 @@ export class NodeClient {
     };
 
     console.log('[NodeClient] Sending connect request with device identity...');
+    console.log('[NodeClient] Payload:', payloadStr);
     this.ws.send(JSON.stringify(connectMessage));
   }
 
