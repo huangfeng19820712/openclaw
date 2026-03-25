@@ -110,16 +110,45 @@ fi
 echo ""
 
 # -----------------------------------------------------------------------------
-# 步骤 1: 部署容器实例
+# 步骤 1: 部署容器实例（支持端口冲突自动重试）
 # -----------------------------------------------------------------------------
 log_header
 log_step "步骤 1/3: 部署容器实例 '$INSTANCE_ID'..."
 log_header
 
-# 捕获部署脚本输出以获取端口信息
-DEPLOY_OUTPUT=$(OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
-OPENCLAW_NO_ONBOARD=true \
-  bash "$INSTANCE_SETUP_SCRIPT" 2>&1)
+# 端口冲突重试逻辑
+MAX_RETRIES=5
+RETRY_COUNT=0
+DEPLOY_OUTPUT=""
+DEPLOY_SUCCESS=false
+
+while [[ $RETRY_COUNT -lt $MAX_RETRIES && "$DEPLOY_SUCCESS" == "false" ]]; do
+  # 使用 --auto-port 参数强制自动分配端口
+  DEPLOY_OUTPUT=$(OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
+  OPENCLAW_NO_ONBOARD=true \
+  OPENCLAW_PORT_OFFSET="" \
+    bash "$INSTANCE_SETUP_SCRIPT" --auto-port 2>&1) || true
+
+  # 检查是否端口冲突
+  if echo "$DEPLOY_OUTPUT" | grep -q "port is already allocated\|Bind for.*failed"; then
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
+      log_warn "端口冲突，尝试 $RETRY_COUNT/$MAX_RETRIES，等待 2 秒后重试..."
+      sleep 2
+    else
+      log_error "达到最大重试次数 ($MAX_RETRIES)，部署失败"
+      echo "$DEPLOY_OUTPUT"
+      exit 1
+    fi
+  elif echo "$DEPLOY_OUTPUT" | grep -q "Error\|error\|ERROR\|failed"; then
+    # 其他错误，直接失败
+    log_error "部署脚本报错"
+    echo "$DEPLOY_OUTPUT"
+    exit 1
+  else
+    DEPLOY_SUCCESS=true
+  fi
+done
 
 echo "$DEPLOY_OUTPUT"
 
@@ -132,6 +161,16 @@ if [[ -n "$GATEWAY_PORT" ]]; then
 elif [[ -n "$PORT_OFFSET" ]]; then
   GATEWAY_PORT=$((18789 + PORT_OFFSET))
   log_info "自动分配的 Gateway 端口：$GATEWAY_PORT (偏移量：$PORT_OFFSET)"
+else
+  # 尝试从 docker port 命令获取
+  CONTAINER_NAME="openclaw-${INSTANCE_ID}-openclaw-gateway-1"
+  GATEWAY_PORT=$(docker port "$CONTAINER_NAME" 18789 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+  if [[ -n "$GATEWAY_PORT" ]]; then
+    log_info "Gateway 端口：$GATEWAY_PORT"
+  else
+    GATEWAY_PORT="18789"
+    log_warn "无法确定 Gateway 端口，使用默认值：$GATEWAY_PORT"
+  fi
 fi
 
 log_info "容器实例部署完成"
@@ -156,7 +195,10 @@ log_header
 log_step "步骤 3/3: 重启容器并生成邀请码..."
 log_header
 
-CONTAINER_NAME="openclaw-${INSTANCE_ID}-openclaw-gateway-1"
+# CONTAINER_NAME 已经在步骤 1 中定义
+if [[ -z "${CONTAINER_NAME:-}" ]]; then
+  CONTAINER_NAME="openclaw-${INSTANCE_ID}-openclaw-gateway-1"
+fi
 
 log_info "重启容器：$CONTAINER_NAME"
 docker restart "$CONTAINER_NAME"
