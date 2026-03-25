@@ -4,14 +4,19 @@
  * OpenClaw Node Auto-Register CLI
  *
  * 用法:
- *   node cli.js --invite-code <邀请码> --gateway <gateway 地址> --port <端口>
+ *   方式 1 - 使用邀请码自动配对并启动:
+ *     node cli.js --invite-code <code> --gateway <host> --port <port>
+ *
+ *   方式 2 - 直接使用 openclaw node run 命令:
+ *     openclaw node run --host <host> --port <port> --display-name <name> --auth.token <token>
  *
  * 示例:
  *   node cli.js --invite-code abc123xyz --gateway 192.168.1.100 --port 18789
+ *   node cli.js --invite-code abc123xyz -g 192.168.1.100 -p 18789 -n "My Node"
  */
 
 import { Command } from 'commander';
-import { NodeClient } from './index.js';
+import { NodeClient } from './node-client.js';
 import pkg from '../package.json' assert { type: 'json' };
 
 const program = new Command();
@@ -20,58 +25,97 @@ program
   .name('openclaw-node-register')
   .description('Auto-register as an OpenClaw node with invite code')
   .version(pkg.version)
-  .requiredOption('--invite-code <code>', 'Invitation code for auto-pairing')
-  .option('--gateway <host>', 'Gateway host', 'localhost')
-  .option('--port <port>', 'Gateway port', '18789')
-  .option('--name <name>', 'Node display name')
+  .requiredOption('-i, --invite-code <code>', 'Invitation code for auto-pairing')
+  .option('-g, --gateway <host>', 'Gateway host', 'localhost')
+  .option('-p, --port <port>', 'Gateway port', '18789')
+  .option('-n, --name <name>', 'Node display name')
   .option('--max-reconnect <count>', 'Max reconnect attempts', '10')
-  .option('--use-proxy', 'Use invite code proxy (connects to proxy port instead of gateway)')
-  .option('--proxy-port <port>', 'Proxy port', '18795')
-  .action((options) => {
+  .option('--dry-run', 'Show pairing result only, do not connect')
+  .action(async (options) => {
     console.log('='.repeat(60));
     console.log('OpenClaw Node Auto-Register');
     console.log('='.repeat(60));
     console.log(`Gateway: ${options.gateway}:${options.port}`);
-    console.log(`Invite Code: ${options.inviteCode.slice(0, 8)}...${options.inviteCode.slice(-8)}`);
+    console.log(`Invite Code: ${options.inviteCode}`);
     console.log(`Display Name: ${options.name || 'auto'}`);
-
-    if (options.useProxy) {
-      console.log(`Proxy Mode: Enabled (port ${options.proxyPort})`);
-      console.log(`Note: Connects to proxy for invite code verification`);
-    }
-
     console.log('='.repeat(60));
     console.log();
 
-    // 如果使用代理，连接到代理端口
-    const targetPort = options.useProxy
-      ? parseInt(options.proxyPort, 10)
-      : parseInt(options.port, 10);
+    // 步骤 1: 调用 one-shot-pair API 获取设备 token
+    console.log('[Step 1/2] Requesting device token via one-shot pair API...');
 
-    const client = new NodeClient({
-      gatewayHost: options.gateway,
-      gatewayPort: targetPort,
-      inviteCode: options.inviteCode,
-      displayName: options.name,
-      maxReconnectAttempts: parseInt(options.maxReconnect, 10),
-      useProxy: options.useProxy,
-    });
+    const apiUrl = `http://${options.gateway}:${options.port}/plugins/node-auto-register/api/one-shot-pair?inviteCode=${encodeURIComponent(options.inviteCode)}`;
 
-    // 处理退出信号
-    process.on('SIGINT', () => {
-      console.log('\n[INFO] Received SIGINT, disconnecting...');
-      client.disconnect();
-      process.exit(0);
-    });
+    try {
+      const response = await fetch(apiUrl);
+      const result = await response.json();
 
-    process.on('SIGTERM', () => {
-      console.log('\n[INFO] Received SIGTERM, disconnecting...');
-      client.disconnect();
-      process.exit(0);
-    });
+      if (!result.ok) {
+        console.error('Pairing failed:', result);
+        process.exit(1);
+      }
 
-    // 启动连接
-    client.initialize();
+      console.log();
+      console.log('[Pairing Success]');
+      console.log(`  Device ID:    ${result.deviceId}`);
+      console.log(`  Device Token: ${result.deviceToken}`);
+      console.log(`  Role:         ${result.role}`);
+      console.log(`  DisplayName:  ${result.displayName}`);
+      console.log();
+
+      if (options.dryRun) {
+        console.log('[Dry Run] Pairing completed, skipping connection');
+        console.log();
+        console.log('To connect as a node, run:');
+        console.log(`  openclaw node run --host ${options.gateway} --port ${options.port} \\`);
+        console.log(`    --display-name "${options.name || 'Auto Node'}" \\`);
+        console.log(`    --auth.token ${result.deviceToken}`);
+        process.exit(0);
+      }
+
+      // 步骤 2: 使用获取的 token 连接到 Gateway
+      console.log('[Step 2/2] Connecting to Gateway as node...');
+      console.log();
+
+      const client = new NodeClient({
+        gatewayHost: options.gateway,
+        gatewayPort: parseInt(options.port, 10),
+        inviteCode: options.inviteCode,
+        deviceToken: result.deviceToken,
+        deviceId: result.deviceId,
+        displayName: options.name,
+        maxReconnectAttempts: parseInt(options.maxReconnect, 10),
+      });
+
+      // 处理退出信号
+      process.on('SIGINT', () => {
+        console.log('\n[INFO] Received SIGINT, disconnecting...');
+        client.disconnect();
+        process.exit(0);
+      });
+
+      process.on('SIGTERM', () => {
+        console.log('\n[INFO] Received SIGTERM, disconnecting...');
+        client.disconnect();
+        process.exit(0);
+      });
+
+      // 启动连接
+      client.initialize();
+
+    } catch (err) {
+      console.error('Error:', err.message);
+      console.error();
+      console.error('Possible causes:');
+      console.error('  1. Invalid or expired invite code');
+      console.error('  2. Gateway unreachable');
+      console.error('  3. Plugin not loaded (node-auto-register)');
+      console.error();
+      console.error('Make sure:');
+      console.error('  1. The Gateway instance is running');
+      console.error('  2. The plugin is loaded: docker logs <container> | grep node-auto-register');
+      process.exit(1);
+    }
   });
 
 program.parse();
