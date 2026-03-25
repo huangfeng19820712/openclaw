@@ -17,7 +17,9 @@
 
 import { Command } from 'commander';
 import { NodeClient } from './node-client.js';
-import pkg from '../package.json' assert { type: 'json' };
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json');
 
 const program = new Command();
 
