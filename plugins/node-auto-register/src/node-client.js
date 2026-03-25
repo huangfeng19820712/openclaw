@@ -219,7 +219,7 @@ export class NodeClient {
       signedAtMs: now,
       token: this.deviceToken,
       nonce: nonce,
-      platform: process.platform,
+      platform: 'node',  // 与配对时的 platform 保持一致
       deviceFamily: 'nodejs',
     });
 
@@ -241,7 +241,7 @@ export class NodeClient {
           id: 'node-host',
           displayName: this.displayName,
           version: '1.0.0',
-          platform: process.platform,
+          platform: 'node',  // 与配对时的 platform 保持一致
           mode: 'node',
           deviceFamily: 'nodejs',
         },
@@ -282,6 +282,15 @@ export class NodeClient {
       }
 
       switch (msg.type) {
+        case 'res':
+          // 处理响应
+          if (msg.error) {
+            console.error('[NodeClient] Error response:', msg.error);
+          } else {
+            console.log('[NodeClient] Success response:', msg.result || msg.payload);
+          }
+          break;
+
         case 'connect.request':
           // 处理连接请求（如果需要）
           console.log('[NodeClient] Connect request received');
@@ -298,7 +307,7 @@ export class NodeClient {
           break;
 
         default:
-          console.log('[NodeClient] Unknown message type:', msg.type);
+          console.log('[NodeClient] Unknown message type:', msg.type, msg);
       }
     } catch (err) {
       console.error('[NodeClient] Failed to parse message:', err.message);

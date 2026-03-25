@@ -365,7 +365,7 @@ async function handleOneShotPair(req, res) {
   const inviteCode = url.searchParams.get('inviteCode');
   const clientType = url.searchParams.get('clientType') || 'control-ui';
 
-  console.log('[one-shot-pair] GET request, inviteCode:', inviteCode ? inviteCode.substring(0, 8) + '...', 'clientType:', clientType);
+  console.log('[one-shot-pair] GET request, inviteCode:', inviteCode ? inviteCode.substring(0, 8) + '...' : '(empty)', 'clientType:', clientType);
 
   if (!inviteCode) {
     console.log('[one-shot-pair] Missing inviteCode parameter');
