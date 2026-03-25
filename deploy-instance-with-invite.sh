@@ -137,10 +137,34 @@ if [[ -n "$GATEWAY_PORT_NUM" ]]; then
   log_info "已清理端口 $GATEWAY_PORT_NUM 的占用进程"
 fi
 
-# 使用 --auto-port 参数自动分配可用端口
+# 自动检测下一个可用的端口偏移量（基于已用端口）
+log_info "检测已用端口..."
+USED_PORTS=$(docker ps --format '{{.Ports}}' 2>/dev/null | \
+  grep -oP '0\.0\.0\.0:\K[0-9]+' | sort -n | uniq || true)
+MAX_PORT=0
+for port in $USED_PORTS; do
+  if [[ "$port" -ge 18789 && "$port" -lt 20000 ]]; then
+    if [[ "$port" -gt "$MAX_PORT" ]]; then
+      MAX_PORT="$port"
+    fi
+  fi
+done
+
+# 计算端口偏移（向下取整到 100 的倍数）
+if [[ "$MAX_PORT" -gt 0 ]]; then
+  OFFSET_BASE=$((MAX_PORT - 18789))
+  DETECTED_OFFSET=$(( (OFFSET_BASE / 100 + 1) * 100 ))
+  log_info "检测到最大端口：$MAX_PORT，使用偏移量：$DETECTED_OFFSET (Gateway 端口：$((18789 + DETECTED_OFFSET)))"
+else
+  DETECTED_OFFSET=0
+  log_info "未检测到已用端口，使用默认偏移量：0"
+fi
+
+# 使用检测到的端口偏移部署
 DEPLOY_OUTPUT=$(OPENCLAW_INSTANCE_ID="$INSTANCE_ID" \
 OPENCLAW_NO_ONBOARD=true \
-  bash "$INSTANCE_SETUP_SCRIPT" --auto-port 2>&1) || true
+OPENCLAW_PORT_OFFSET="$DETECTED_OFFSET" \
+  bash "$INSTANCE_SETUP_SCRIPT" 2>&1) || true
 
 echo "$DEPLOY_OUTPUT"
 
