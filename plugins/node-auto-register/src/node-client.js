@@ -209,12 +209,13 @@ export class NodeClient {
     const nonce = this.connectNonce;
 
     // 构建设备签名载荷（使用 V3 格式）
+    // 注意：使用 operator 角色，因为 one-shot-pair API 返回的是 operator 角色
     const payloadStr = buildDeviceAuthPayloadV3({
       deviceId: this.deviceId,
       clientId: 'node-host',
       clientMode: 'node',
-      role: 'node',
-      scopes: [],
+      role: 'operator',
+      scopes: ['control'],
       signedAtMs: now,
       token: this.deviceToken,
       nonce: nonce,
@@ -253,6 +254,8 @@ export class NodeClient {
         auth: {
           deviceToken: this.deviceToken,
         },
+        role: 'operator',
+        scopes: ['control'],
       },
     };
 
