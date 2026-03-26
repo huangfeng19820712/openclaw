@@ -2,6 +2,11 @@
 
 ## 快速开始
 
+> **注意**: 生成邀请码时如需设置多次使用，请在容器内执行命令：
+> ```bash
+> docker exec <container> sh -c 'INVITE_MAX_USES=999 node /home/node/.openclaw/extensions/node-auto-register/scripts/generate-invite-code.js <name>'
+> ```
+
 ### 步骤 1: 生成邀请码
 
 在 Gateway 服务器上运行：
@@ -333,6 +338,114 @@ timeout 10 node cli.js -i CODE -g GATEWAY -p PORT
 
 # 在服务器端查看日志
 docker logs <container> 2>&1 | grep -E '(paired|node-host|hello-ok)'
+```
+
+---
+
+## 测试验证案例
+
+### 完整测试流程（2026-03-25 验证通过）
+
+**步骤 1: 生成邀请码（maxUses=999）**
+
+```bash
+docker exec openclaw-product1-openclaw-gateway-1 sh -c 'INVITE_MAX_USES=999 node /home/node/.openclaw/extensions/node-auto-register/scripts/generate-invite-code.js node-test-2'
+```
+
+输出：
+```
+============================================================
+OpenClaw Invite Code Generated
+============================================================
+Code Name:    node-test-2
+Invite Code:  OmcHFVkm4sJouXWj29CYM5_EnNOCKfwpXJKqWcQiD8w
+Expires:      2026-04-01T15:32:37.039Z
+Max Uses:     999
+============================================================
+```
+
+**步骤 2: 测试 one-shot-pair API**
+
+```bash
+curl -s 'http://localhost:18989/plugins/node-auto-register/api/one-shot-pair?inviteCode=OmcHFVkm4sJouXWj29CYM5_EnNOCKfwpXJKqWcQiD8w&clientType=node'
+```
+
+响应：
+```json
+{
+  "ok": true,
+  "paired": true,
+  "deviceId": "9d967666d2faeafbf9b85a34ce1b100d48fbb0297f11b10997673355f4823c32",
+  "deviceToken": "upSCO-Jz0VzCtr6GOVvsbJg3NLPS6CgWA5NqLMUKSqs",
+  "role": "node",
+  "displayName": "Auto-Paired Node",
+  "publicKey": "tnpdoWoutNZee_Sg...",
+  "privateKey": "..."
+}
+```
+
+**步骤 3: 测试节点连接**
+
+```bash
+cd /data/openclaw/openclaw_instances/product1/extensions/node-auto-register
+timeout 5 node src/cli.js \
+  --invite-code OmcHFVkm4sJouXWj29CYM5_EnNOCKfwpXJKqWcQiD8w \
+  --gateway localhost \
+  --port 18989 \
+  --name Test-Node-1
+```
+
+成功输出关键信息：
+```
+[Step 1/2] Requesting device token via one-shot pair API...
+[Pairing Success]
+  Device ID:    9d967666d2faeafbf9b85a34ce1b100d48fbb0297f11b10997673355f4823c32
+  Device Token: upSCO-Jz0VzCtr6G...
+  Role:         node
+
+[Step 2/2] Connecting to Gateway as node...
+[NodeClient] WebSocket connected
+[NodeClient] Received connect challenge, nonce: 69e5cb40...
+[NodeClient] Sending connect request with device identity...
+[NodeClient] Received: res
+[NodeClient] Success response: { type: 'hello-ok', ... }
+```
+
+**步骤 4: 验证配对设备**
+
+```bash
+node scripts/verify-pairing.js list
+```
+
+输出：
+```
+================================================================================
+已配对的设备列表
+================================================================================
+
+[6] 📦 Test-Node-1
+    Device ID:  9d967666d2faeafbf9b85a34ce1b100d48fbb0297f11b10997673355f4823c32
+    Client:     node-host (node)
+    Role:       node
+    Platform:   node / nodejs
+    Scopes:     none
+    Created:    3/25/2026, 11:38:52 PM
+    Token:      upSCO-Jz0VzCtr6G...
+    Last Used:  3/25/2026, 11:38:52 PM
+```
+
+**步骤 5: 检查 Gateway 日志**
+
+```bash
+docker logs openclaw-product1-openclaw-gateway-1 2>&1 | grep -E '(one-shot-pair|Pairing approved)'
+```
+
+输出：
+```
+2026-03-25T15:38:52.602+00:00 [one-shot-pair] Pairing approved successfully!
+2026-03-25T15:38:52.604+00:00 [one-shot-pair]   - deviceId: 9d967666d2faeafbf9b85a34ce1b100d48fbb0297f11b10997673355f4823c32
+2026-03-25T15:38:52.606+00:00 [one-shot-pair]   - deviceToken: upSCO-Jz0VzCtr6G...
+2026-03-25T15:38:52.607+00:00 [one-shot-pair]   - role: node
 ```
 
 ---

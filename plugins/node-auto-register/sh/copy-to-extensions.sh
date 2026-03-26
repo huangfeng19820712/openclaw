@@ -151,6 +151,27 @@ fi
 
 echo ""
 
+# 安装 npm 依赖
+log_header
+log_info "步骤 4: 安装 npm 依赖..."
+log_header
+
+if [ -f "$PLUGIN_TARGET/package.json" ]; then
+  log_info "正在安装依赖..."
+  cd "$PLUGIN_TARGET"
+  if command -v npm &> /dev/null; then
+    npm install --production 2>&1 | tail -5
+    log_info "npm 依赖安装完成"
+  else
+    log_warn "npm 未安装，跳过依赖安装"
+    log_warn "请手动运行：cd $PLUGIN_TARGET && npm install"
+  fi
+else
+  log_warn "找不到 package.json，跳过依赖安装"
+fi
+
+echo ""
+
 # 完成
 log_header
 log_info "✅ 插件拷贝完成！"
