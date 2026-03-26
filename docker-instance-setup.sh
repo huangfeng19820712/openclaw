@@ -106,10 +106,12 @@ if [[ "${1:-}" == "--new-token" ]]; then
   NEW_TOKEN=true
 fi
 
-# 支持 --auto-port 命令行参数或使用实例 ID 自动分配端口
-if [[ "${1:-}" == "--auto-port" ]] || [[ -z "$PORT_OFFSET" && "$INSTANCE_ID" =~ ^[a-zA-Z]+[0-9]+$ ]]; then
+# 支持 --auto-port 命令行参数或自动分配端口
+# 当未指定 PORT_OFFSET 时，自动检测已用端口并分配下一个可用偏移量
+if [[ "${1:-}" == "--auto-port" ]] || [[ -z "$PORT_OFFSET" ]]; then
   # 自动检测已用端口并分配
   detect_port_offset() {
+    local -a used_offsets=()
     local max_offset=0
 
     # 1. 从运行中的 docker 容器检测已用端口
@@ -124,10 +126,12 @@ if [[ "${1:-}" == "--auto-port" ]] || [[ -z "$PORT_OFFSET" && "$INSTANCE_ID" =~ 
         ports=$(docker port "$container_id" 2>/dev/null || true)
         if [[ -n "$ports" ]]; then
           # 从端口映射中提取 host port (容器端口 18789 映射到宿主机端口)
+          # docker port 输出格式：18789/tcp -> 0.0.0.0:18889
           local host_port
-          host_port=$(echo "$ports" | grep ":18789" | cut -d':' -f2 | head -1)
-          if [[ -n "$host_port" ]]; then
+          host_port=$(echo "$ports" | grep "18789/tcp" | awk -F'[: >]' '{print $NF}' | head -1)
+          if [[ -n "$host_port" && "$host_port" -ge 18789 ]]; then
             local offset=$((host_port - 18789))
+            used_offsets+=("$offset")
             if [[ "$offset" -gt "$max_offset" ]]; then
               max_offset="$offset"
             fi
@@ -150,8 +154,9 @@ if [[ "${1:-}" == "--auto-port" ]] || [[ -z "$PORT_OFFSET" && "$INSTANCE_ID" =~ 
           if [[ -f "$env_file" ]]; then
             local port
             port=$(grep "^OPENCLAW_GATEWAY_PORT=" "$env_file" 2>/dev/null | cut -d'=' -f2-)
-            if [[ -n "$port" ]]; then
+            if [[ -n "$port" && "$port" -ge 18789 ]]; then
               local offset=$((port - 18789))
+              used_offsets+=("$offset")
               if [[ "$offset" -gt "$max_offset" ]]; then
                 max_offset="$offset"
               fi
@@ -161,8 +166,23 @@ if [[ "${1:-}" == "--auto-port" ]] || [[ -z "$PORT_OFFSET" && "$INSTANCE_ID" =~ 
       done
     fi
 
-    # 返回下一个可用偏移（+100 递增）
-    echo "$((max_offset + 100))"
+    # 找到第一个未使用的偏移量（步长 100）
+    local next_offset=0
+    while true; do
+      local is_used=false
+      for used in "${used_offsets[@]}"; do
+        if [[ "$used" -eq "$next_offset" ]]; then
+          is_used=true
+          break
+        fi
+      done
+      if [[ "$is_used" == "false" ]]; then
+        break
+      fi
+      next_offset=$((next_offset + 100))
+    done
+
+    echo "$next_offset"
   }
 
   if [[ -z "$PORT_OFFSET" ]]; then
@@ -297,7 +317,7 @@ fi
 # 端口和项目配置
 # =============================================================================
 
-export COMPOSE_PROJECT_NAME="openclaw-${INSTANCE_ID}"
+export COMPOSE_PROJECT_NAME="openclaw-$(echo "${INSTANCE_ID}" | tr '[:upper:]' '[:lower:]')"
 # 确保 PORT_OFFSET 有默认值
 PORT_OFFSET="${PORT_OFFSET:-0}"
 export OPENCLAW_GATEWAY_PORT="$((18789 + PORT_OFFSET))"
