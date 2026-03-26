@@ -78,13 +78,13 @@ function generateControlUiUrl(inviteCode, gatewayPort) {
   // 如果 gatewayPort 参数已传入，说明已经是计算后的端口，直接使用
   // 否则从环境变量读取并计算
   if (gatewayPort) {
-    return `http://127.0.0.1:${gatewayPort}/control-ui/?inviteCode=${inviteCode}&session=main`;
+    return `http://127.0.0.1:${gatewayPort}/?inviteCode=${inviteCode}&session=main`;
   }
   const portOffset = parseInt(process.env.OPENCLAW_PORT_OFFSET || '0', 10);
   const basePort = 18789;
   const port = basePort + portOffset;
 
-  return `http://127.0.0.1:${port}/control-ui/?inviteCode=${inviteCode}&session=main`;
+  return `http://127.0.0.1:${port}/?inviteCode=${inviteCode}&session=main`;
 }
 
 /**

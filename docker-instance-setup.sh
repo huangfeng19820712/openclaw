@@ -631,15 +631,15 @@ if command -v hostname >/dev/null 2>&1; then
 fi
 
 echo "Control UI 访问 URL:"
-echo "  本地访问：http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/control-ui/?session=main"
+echo "  本地访问：http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/?session=main"
 if [[ -n "$HOST_IP" && "$HOST_IP" != "127.0.0.1" && "$HOST_IP" != "localhost" ]]; then
-  echo "  局域网访问：http://$HOST_IP:$OPENCLAW_GATEWAY_PORT/control-ui/?session=main"
+  echo "  局域网访问：http://$HOST_IP:$OPENCLAW_GATEWAY_PORT/?session=main"
 fi
 echo ""
 echo "或使用带 token 的 URL:"
-echo "  本地访问：http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/control-ui/?token=$OPENCLAW_GATEWAY_TOKEN&session=main"
+echo "  本地访问：http://127.0.0.1:$OPENCLAW_GATEWAY_PORT/?token=$OPENCLAW_GATEWAY_TOKEN&session=main"
 if [[ -n "$HOST_IP" && "$HOST_IP" != "127.0.0.1" && "$HOST_IP" != "localhost" ]]; then
-  echo "  局域网访问：http://$HOST_IP:$OPENCLAW_GATEWAY_PORT/control-ui/?token=$OPENCLAW_GATEWAY_TOKEN&session=main"
+  echo "  局域网访问：http://$HOST_IP:$OPENCLAW_GATEWAY_PORT/?token=$OPENCLAW_GATEWAY_TOKEN&session=main"
 fi
 echo ""
 echo "管理命令:"
