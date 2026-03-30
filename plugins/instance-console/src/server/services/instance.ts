@@ -1,3 +1,4 @@
+import { sessionKeyToContainerName } from '../../shared/utils.js';
 import type { Instance, InstanceCreateInput, InstanceUpdateInput } from '../../shared/types.js';
 import type { LoadedConfig } from '../../config/loader.js';
 import type { ContainerService } from './container.js';
