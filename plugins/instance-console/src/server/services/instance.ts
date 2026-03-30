@@ -1,4 +1,3 @@
-import { sessionKeyToContainerName } from '../../shared/utils.js';
 import type { Instance, InstanceCreateInput, InstanceUpdateInput } from '../../shared/types.js';
 import type { LoadedConfig } from '../../config/loader.js';
 import type { ContainerService } from './container.js';
@@ -37,12 +36,15 @@ export class InstanceService {
   }
 
   /**
-   * 根据 sessionKey 获取实例
+   * 根据 sessionKey 或容器名获取实例
    */
-  async getInstanceBySessionKey(sessionKey: string): Promise<Instance | null> {
-    const containerName = sessionKeyToContainerName(sessionKey);
+  async getInstanceBySessionKey(sessionKeyOrContainerName: string): Promise<Instance | null> {
     const containers = await this.containerService.listSandboxContainers();
-    const container = containers.find(c => c.name === containerName || c.labels['openclaw.sessionKey'] === sessionKey);
+    // 直接用传入的值当作容器名查找（因为容器名和sessionKey都是直接可用的）
+    const container = containers.find(c =>
+      c.name === sessionKeyOrContainerName ||
+      c.labels['openclaw.sessionKey'] === sessionKeyOrContainerName
+    );
 
     if (!container) {
       return null;
