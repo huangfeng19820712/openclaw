@@ -17,8 +17,10 @@ export class ContainerService {
    */
   private async execDocker(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
     return new Promise((resolve) => {
+      // 使用数组形式，让 spawn 直接调用 execvp，不经过 shell
+      // 这样可以避免 shell 对 {{.Names}} 等 Go 模板语法的解析
       const proc = spawn('docker', args, {
-        shell: true,
+        shell: false,
         windowsHide: true,
       });
 
@@ -186,27 +188,13 @@ export class ContainerService {
     labels: Record<string, string>;
   }>> {
     try {
-      // 首先尝试获取带有 openclaw.sandbox=1 标签的容器
-      let { stdout, code } = await this.execDocker([
-        'ps',
-        '--filter', 'label=openclaw.sandbox=1',
+      // 直接获取所有容器，然后按镜像名称过滤
+      const result = await this.execDocker([
+        'ps', '-a',
         '--format', '{{.Names}}|{{.Status}}|{{.Image}}|{{.CreatedAt}}|{{.Labels}}'
       ]);
 
-      // 如果没有带标签的容器，尝试按名称前缀过滤
-      if (code !== 0 || !stdout.trim()) {
-        stdout = await this.execDocker([
-          'ps', '-a', '--filter', 'name=openclaw-',
-          '--format', '{{.Names}}|{{.Status}}|{{.Image}}|{{.CreatedAt}}|{{.Labels}}'
-        ]).then(r => r.stdout);
-
-        // 如果还是没有，尝试所有容器
-        if (!stdout.trim()) {
-          stdout = await this.execDocker([
-            'ps', '-a', '--format', '{{.Names}}|{{.Status}}|{{.Image}}|{{.CreatedAt}}|{{.Labels}}'
-          ]).then(r => r.stdout);
-        }
-      }
+      let stdout = result.stdout;
 
       if (!stdout.trim()) {
         return [];
@@ -232,7 +220,7 @@ export class ContainerService {
           });
         }
 
-        // 从容器名称推断 sessionKey（如果有 openclaw-sbx- 前缀）
+        // 从容器名称推断 sessionKey
         if (name.startsWith('openclaw-sbx-')) {
           labels['openclaw.sandbox'] = '1';
           labels['openclaw.sessionKey'] = name.replace('openclaw-sbx-', '');
@@ -253,7 +241,8 @@ export class ContainerService {
         c.image === 'openclaw:local' ||
         c.image.includes('openclaw')
       );
-    } catch {
+    } catch (e) {
+      console.error('listSandboxContainers error:', e);
       return [];
     }
   }
