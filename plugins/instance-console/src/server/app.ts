@@ -2,10 +2,10 @@ import express, { Express } from 'express';
 import type { Server } from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import jwt from 'jsonwebtoken';
 import { corsMiddleware } from './middleware/cors.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { jwtAuth } from './middleware/auth.js';
-import { createAuthRouter } from './routes/auth.js';
 import { createInstancesRouter } from './routes/instances.js';
 import { createModelsRouter } from './routes/models.js';
 import { createChannelsRouter } from './routes/channels.js';
@@ -17,6 +17,7 @@ import type { ModelService } from './services/model.js';
 import type { ChannelService } from './services/channel.js';
 import type { ContainerService } from './services/container.js';
 import type { LoadedConfig } from '../config/loader.js';
+import type { JwtPayload } from '../shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -48,23 +49,162 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
     res.json({ ok: true, status: 'healthy' });
   });
 
-  // API 路由
-  const authRouter = createAuthRouter(
-    services.userService,
-    config.auth.jwtSecret,
-    config.auth.sessionExpire
-  );
+  // ========== 认证路由 ==========
+  const { userService } = services;
 
-  // 公开路由
-  app.use('/api/auth/login', authRouter);
-  app.use('/api/auth/init', authRouter);
+  // POST /api/auth/login - 公开
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { username, password } = req.body;
 
-  // 需要认证的路由
+      if (!username || !password) {
+        res.status(400).json({ ok: false, error: '用户名和密码不能为空' });
+        return;
+      }
+
+      const user = await userService.validateCredentials(username, password);
+
+      if (!user) {
+        res.status(401).json({ ok: false, error: '用户名或密码错误' });
+        return;
+      }
+
+      const payload: JwtPayload = {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        type: 'access',
+      };
+
+      const token = jwt.sign(payload, config.auth.jwtSecret, { expiresIn: config.auth.sessionExpire });
+
+      res.json({
+        ok: true,
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+        },
+      });
+    } catch (error) {
+      console.error('Login error:', error);
+      res.status(500).json({ ok: false, error: '登录失败' });
+    }
+  });
+
+  // POST /api/auth/init - 公开
+  app.post('/api/auth/init', async (req, res) => {
+    try {
+      const { username, password } = req.body;
+
+      if (!username || !password) {
+        res.status(400).json({ ok: false, error: '用户名和密码不能为空' });
+        return;
+      }
+
+      if (password.length < 8) {
+        res.status(400).json({ ok: false, error: '密码长度至少为 8 个字符' });
+        return;
+      }
+
+      const hasAdmin = await userService.hasAdmin();
+      if (hasAdmin) {
+        res.status(403).json({ ok: false, error: '管理员账号已存在，请直接登录' });
+        return;
+      }
+
+      const user = await userService.createAdmin({ username, password });
+
+      const payload: JwtPayload = {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        type: 'access',
+      };
+
+      const token = jwt.sign(payload, config.auth.jwtSecret, { expiresIn: config.auth.sessionExpire });
+
+      res.json({
+        ok: true,
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+        },
+      });
+    } catch (error) {
+      console.error('Init admin error:', error);
+      res.status(500).json({ ok: false, error: '初始化管理员账号失败' });
+    }
+  });
+
+  // 需要认证的中间件
   const jwtAuthMiddleware = jwtAuth(config.auth.jwtSecret);
 
-  app.use('/api/auth/logout', jwtAuthMiddleware, authRouter);
-  app.use('/api/auth/me', jwtAuthMiddleware, authRouter);
-  app.use('/api/auth/password', jwtAuthMiddleware, authRouter);
+  // POST /api/auth/logout - 需要认证
+  app.post('/api/auth/logout', jwtAuthMiddleware, async (req, res) => {
+    res.json({ ok: true });
+  });
+
+  // GET /api/auth/me - 需要认证
+  app.get('/api/auth/me', jwtAuthMiddleware, async (req, res) => {
+    try {
+      const user = await userService.getUserById(req.user!.userId);
+      if (!user) {
+        res.status(401).json({ ok: false, error: '用户不存在' });
+        return;
+      }
+      res.json({
+        ok: true,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+        },
+      });
+    } catch (error) {
+      console.error('Get user error:', error);
+      res.status(500).json({ ok: false, error: '获取用户信息失败' });
+    }
+  });
+
+  // PUT /api/auth/password - 需要认证
+  app.put('/api/auth/password', jwtAuthMiddleware, async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({ ok: false, error: '当前密码和新密码不能为空' });
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        res.status(400).json({ ok: false, error: '新密码长度至少为 8 个字符' });
+        return;
+      }
+
+      const user = await userService.validateCredentials(req.user!.username, currentPassword);
+      if (!user) {
+        res.status(401).json({ ok: false, error: '当前密码错误' });
+        return;
+      }
+
+      const updated = await userService.updatePassword(user.id, newPassword);
+      if (!updated) {
+        res.status(500).json({ ok: false, error: '更新密码失败' });
+        return;
+      }
+
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Change password error:', error);
+      res.status(500).json({ ok: false, error: '修改密码失败' });
+    }
+  });
+
+  // ========== 其他 API 路由 ==========
 
   // 实例路由
   const instancesRouter = createInstancesRouter(services.instanceService);
