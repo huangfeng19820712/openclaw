@@ -174,4 +174,55 @@ export class ContainerService {
       return false;
     }
   }
+
+  /**
+   * 从 Docker 直接列出所有 OpenClaw 沙箱容器
+   */
+  async listSandboxContainers(): Promise<Array<{
+    name: string;
+    status: string;
+    image: string;
+    createdAt: string;
+    labels: Record<string, string>;
+  }>> {
+    try {
+      // 使用 docker ps --format 获取带有 openclaw.sandbox=1 标签的容器
+      const { stdout, code } = await this.execDocker([
+        'ps',
+        '--filter', 'label=openclaw.sandbox=1',
+        '--format', '{{.Names}}|{{.Status}}|{{.Image}}|{{.CreatedAt}}|{{.Labels}}'
+      ]);
+
+      if (code !== 0 || !stdout.trim()) {
+        return [];
+      }
+
+      const containers = stdout.trim().split('\n').map(line => {
+        const [name, status, image, createdAt, labelsStr] = line.split('|');
+        const labels: Record<string, string> = {};
+
+        // 解析 labels 字符串，格式如: "openclaw.sandbox=1,openclaw.sessionKey=test"
+        if (labelsStr) {
+          labelsStr.split(',').forEach(label => {
+            const [key, value] = label.split('=');
+            if (key && value !== undefined) {
+              labels[key] = value;
+            }
+          });
+        }
+
+        return {
+          name: name.trim(),
+          status: status.trim(),
+          image: image.trim(),
+          createdAt: createdAt.trim(),
+          labels,
+        };
+      });
+
+      return containers;
+    } catch {
+      return [];
+    }
+  }
 }
