@@ -1,5 +1,7 @@
 import express, { Express } from 'express';
 import type { Server } from 'http';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { corsMiddleware } from './middleware/cors.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { jwtAuth } from './middleware/auth.js';
@@ -15,6 +17,10 @@ import type { ModelService } from './services/model.js';
 import type { ChannelService } from './services/channel.js';
 import type { ContainerService } from './services/container.js';
 import type { LoadedConfig } from '../config/loader.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const CLIENT_DIST_PATH = join(__dirname, '../client');
 
 export interface AppServices {
   userService: UserService;
@@ -33,6 +39,9 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
 
   // CORS
   app.use(corsMiddleware(config.cors.allowedOrigins));
+
+  // 静态文件服务
+  app.use(express.static(CLIENT_DIST_PATH));
 
   // 健康检查
   app.get('/health', (req, res) => {
@@ -76,6 +85,15 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
   // API Key 路由
   const apiKeysRouter = createApiKeysRouter(services.userService);
   app.use('/api/apikeys', jwtAuthMiddleware, apiKeysRouter);
+
+  // SPA 路由 - 所有非 API 请求返回 index.html
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(join(CLIENT_DIST_PATH, 'index.html'));
+    } else {
+      res.status(404).json({ ok: false, error: `路由不存在: ${req.method} ${req.path}` });
+    }
+  });
 
   // 错误处理
   app.use(notFoundHandler);
