@@ -2,7 +2,7 @@
 # 复制此文件为 config.yaml 并修改相应配置
 
 server:
-  port: 18790
+  port: 12548
   host: "0.0.0.0"
 
 auth:

@@ -13,7 +13,7 @@ export interface LoadedConfig extends AppConfig {
 
 const DEFAULT_CONFIG: AppConfig = {
   server: {
-    port: 18790,
+    port: 12548,
     host: '0.0.0.0',
   },
   auth: {

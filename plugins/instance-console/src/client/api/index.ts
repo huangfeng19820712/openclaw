@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
-const BASE_URL = import.meta.env.PROD ? '/api' : 'http://localhost:18790/api';
+const BASE_URL = import.meta.env.PROD ? '/api' : 'http://localhost:12548/api';
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
