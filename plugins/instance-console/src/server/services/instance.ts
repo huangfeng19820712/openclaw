@@ -1,4 +1,4 @@
-import { sessionKeyToContainerName } from '../../shared/utils.js';
+import { spawn } from 'child_process';
 import type { Instance, InstanceCreateInput, InstanceUpdateInput } from '../../shared/types.js';
 import type { LoadedConfig } from '../../config/loader.js';
 import type { ContainerService } from './container.js';
@@ -6,10 +6,44 @@ import type { ContainerService } from './container.js';
 export class InstanceService {
   private config: LoadedConfig;
   private containerService: ContainerService;
+  private readonly scriptPath = '/data/workspace/openclaw/docker-instance-setup.sh';
 
   constructor(config: LoadedConfig, containerService: ContainerService) {
     this.config = config;
     this.containerService = containerService;
+  }
+
+  /**
+   * 执行 Shell 脚本
+   */
+  private async execScript(env: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      const proc = spawn('bash', [this.scriptPath], {
+        env: { ...process.env, ...env },
+        shell: false,
+        windowsHide: true,
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout?.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (code) => {
+        resolve({ code: code || 0, stdout, stderr });
+      });
+
+      proc.on('error', (err) => {
+        stderr += err.message;
+        resolve({ code: 1, stdout, stderr });
+      });
+    });
   }
 
   /**
@@ -68,37 +102,43 @@ export class InstanceService {
   }
 
   /**
-   * 创建新实例
+   * 创建新实例 - 调用 docker-instance-setup.sh 脚本
    */
   async createInstance(input: InstanceCreateInput): Promise<Instance> {
-    const containerName = sessionKeyToContainerName(input.sessionKey);
+    const instanceId = input.sessionKey;
 
-    // 创建 Docker 容器
-    await this.containerService.createContainer({
-      containerName,
-      sessionKey: input.sessionKey,
-      image: input.dockerImage || 'openclaw-sandbox:bookworm-slim',
-      workdir: input.workdir,
-      env: input.env,
-      networkMode: input.networkMode || 'bridge',
-      idleTimeoutHours: input.idleTimeoutHours || 24,
-    });
+    // 调用 docker-instance-setup.sh 创建容器
+    const env: Record<string, string> = {
+      OPENCLAW_INSTANCE_ID: instanceId,
+      OPENCLAW_NO_ONBOARD: 'true',
+      OPENCLAW_SKIP_BUILD: 'true',
+      OPENCLAW_IMAGE: input.dockerImage || 'openclaw:local',
+    };
 
+    // 如果指定了端口偏移
+    if (input.portOffset !== undefined) {
+      env.OPENCLAW_PORT_OFFSET = String(input.portOffset);
+    }
+
+    const result = await this.execScript(env);
+
+    if (result.code !== 0) {
+      throw new Error(`创建实例失败: ${result.stderr || result.stdout}`);
+    }
+
+    // 从输出中提取信息
     const now = new Date().toISOString();
+    const containerName = `openclaw-${instanceId}-openclaw-gateway-1`;
 
     return {
       id: containerName,
-      sessionKey: input.sessionKey,
+      sessionKey: instanceId,
       displayName: input.displayName,
       containerName,
-      status: 'stopped',
-      image: input.dockerImage || 'openclaw-sandbox:bookworm-slim',
+      status: 'running',
+      image: input.dockerImage || 'openclaw:local',
       createdAt: now,
       lastUsedAt: now,
-      env: input.env,
-      idleTimeoutHours: input.idleTimeoutHours,
-      networkMode: input.networkMode,
-      workdir: input.workdir,
     };
   }
 

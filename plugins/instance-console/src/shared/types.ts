@@ -74,10 +74,7 @@ export interface InstanceCreateInput {
   sessionKey: string;
   displayName?: string;
   dockerImage?: string;
-  workdir?: string;
-  env?: Record<string, string>;
-  networkMode?: string;
-  idleTimeoutHours?: number;
+  portOffset?: number;
 }
 
 export interface InstanceUpdateInput {

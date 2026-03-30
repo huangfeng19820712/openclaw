@@ -74,10 +74,6 @@ export function createInstancesRouter(instanceService: InstanceService) {
         sessionKey,
         displayName,
         dockerImage,
-        workdir,
-        env,
-        networkMode,
-        idleTimeoutHours,
       } = req.body;
 
       if (!sessionKey) {
@@ -96,10 +92,6 @@ export function createInstancesRouter(instanceService: InstanceService) {
         sessionKey,
         displayName,
         dockerImage,
-        workdir,
-        env,
-        networkMode,
-        idleTimeoutHours,
       });
 
       res.status(201).json({ ok: true, data: instance });
