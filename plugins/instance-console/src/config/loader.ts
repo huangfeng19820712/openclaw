@@ -21,7 +21,7 @@ const DEFAULT_CONFIG: AppConfig = {
     sessionExpire: 86400,
   },
   cors: {
-    allowedOrigins: ['http://localhost:18790', 'http://localhost:18791'],
+    allowedOrigins: ['http://localhost:12548', 'http://localhost:12549'],
   },
   openclaw: {
     configDir: '~/.openclaw',
