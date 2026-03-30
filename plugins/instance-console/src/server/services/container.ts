@@ -186,22 +186,43 @@ export class ContainerService {
     labels: Record<string, string>;
   }>> {
     try {
-      // 使用 docker ps --format 获取带有 openclaw.sandbox=1 标签的容器
-      const { stdout, code } = await this.execDocker([
+      // 首先尝试获取带有 openclaw.sandbox=1 标签的容器
+      let { stdout, code } = await this.execDocker([
         'ps',
         '--filter', 'label=openclaw.sandbox=1',
         '--format', '{{.Names}}|{{.Status}}|{{.Image}}|{{.CreatedAt}}|{{.Labels}}'
       ]);
 
+      // 如果没有带标签的容器，尝试按名称前缀过滤
       if (code !== 0 || !stdout.trim()) {
+        stdout = await this.execDocker([
+          'ps', '-a', '--filter', 'name=openclaw-',
+          '--format', '{{.Names}}|{{.Status}}|{{.Image}}|{{.CreatedAt}}|{{.Labels}}'
+        ]).then(r => r.stdout);
+
+        // 如果还是没有，尝试所有容器
+        if (!stdout.trim()) {
+          stdout = await this.execDocker([
+            'ps', '-a', '--format', '{{.Names}}|{{.Status}}|{{.Image}}|{{.CreatedAt}}|{{.Labels}}'
+          ]).then(r => r.stdout);
+        }
+      }
+
+      if (!stdout.trim()) {
         return [];
       }
 
       const containers = stdout.trim().split('\n').map(line => {
-        const [name, status, image, createdAt, labelsStr] = line.split('|');
+        const parts = line.split('|');
+        const name = parts[0]?.trim() || '';
+        const status = parts[1]?.trim() || '';
+        const image = parts[2]?.trim() || '';
+        const createdAt = parts[3]?.trim() || '';
+        const labelsStr = parts[4]?.trim() || '';
+
         const labels: Record<string, string> = {};
 
-        // 解析 labels 字符串，格式如: "openclaw.sandbox=1,openclaw.sessionKey=test"
+        // 解析 labels 字符串
         if (labelsStr) {
           labelsStr.split(',').forEach(label => {
             const [key, value] = label.split('=');
@@ -211,16 +232,27 @@ export class ContainerService {
           });
         }
 
+        // 从容器名称推断 sessionKey（如果有 openclaw-sbx- 前缀）
+        if (name.startsWith('openclaw-sbx-')) {
+          labels['openclaw.sandbox'] = '1';
+          labels['openclaw.sessionKey'] = name.replace('openclaw-sbx-', '');
+        }
+
         return {
-          name: name.trim(),
-          status: status.trim(),
-          image: image.trim(),
-          createdAt: createdAt.trim(),
+          name,
+          status,
+          image,
+          createdAt,
           labels,
         };
       });
 
-      return containers;
+      // 过滤出 OpenClaw 相关的容器（通过镜像名称）
+      return containers.filter(c =>
+        c.labels['openclaw.sandbox'] === '1' ||
+        c.image === 'openclaw:local' ||
+        c.image.includes('openclaw')
+      );
     } catch {
       return [];
     }
