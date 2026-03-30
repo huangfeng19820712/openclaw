@@ -11,8 +11,10 @@ export interface User {
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem('token'));
   const user = ref<User | null>(null);
+  const authLoading = ref(false);
+  const authChecked = ref(false);
 
-  const isAuthenticated = computed(() => !!token.value);
+  const isAuthenticated = computed(() => !!token.value && authChecked.value);
 
   async function login(username: string, password: string): Promise<void> {
     const response = await api.post('/auth/login', { username, password });
@@ -20,6 +22,7 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = response.token;
       user.value = response.user || null;
       localStorage.setItem('token', response.token);
+      authChecked.value = true;
     } else {
       throw new Error(response.error || '登录失败');
     }
@@ -31,23 +34,31 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = response.token;
       user.value = response.user || null;
       localStorage.setItem('token', response.token);
+      authChecked.value = true;
     } else {
       throw new Error(response.error || '初始化失败');
     }
   }
 
   async function fetchCurrentUser(): Promise<void> {
-    if (!token.value) return;
+    if (!token.value) {
+      authChecked.value = true;
+      return;
+    }
 
+    authLoading.value = true;
     try {
       const response = await api.get('/auth/me');
       if (response.ok && response.user) {
-        user.value = response.user;
+        user.value = response.user as User;
+        authChecked.value = true;
       } else {
         logout();
       }
     } catch {
       logout();
+    } finally {
+      authLoading.value = false;
     }
   }
 
@@ -61,17 +72,19 @@ export const useAuthStore = defineStore('auth', () => {
   function logout(): void {
     token.value = null;
     user.value = null;
+    authChecked.value = true;
+    authLoading.value = false;
     localStorage.removeItem('token');
   }
 
   // 初始化时获取当前用户
-  if (token.value) {
-    fetchCurrentUser();
-  }
+  fetchCurrentUser();
 
   return {
     token,
     user,
+    authLoading,
+    authChecked,
     isAuthenticated,
     login,
     init,

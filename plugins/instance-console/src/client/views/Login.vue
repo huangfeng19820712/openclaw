@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { api } from '../api';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -14,17 +13,12 @@ const confirmPassword = ref('');
 const error = ref('');
 const loading = ref(false);
 
-onMounted(async () => {
-  // 检查是否已初始化
-  try {
-    const response = await api.get('/auth/me');
-    if (response.ok && response.user) {
-      router.push('/');
-    }
-  } catch {
-    // 未登录
+// 如果有 token 且已验证，直接跳转
+watch(() => authStore.isAuthenticated, (isAuth) => {
+  if (isAuth) {
+    router.push('/');
   }
-});
+}, { immediate: true });
 
 async function handleInit(): Promise<void> {
   if (!username.value || !password.value) {
@@ -86,7 +80,12 @@ async function handleLogin(): Promise<void> {
       </div>
 
       <div class="card">
-        <template v-if="isInitializing || !authStore.isAuthenticated">
+        <div v-if="authStore.authLoading" class="text-center">
+          <p class="text-slate-400 mb-4">正在检查登录状态...</p>
+          <div class="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto"></div>
+        </div>
+
+        <template v-else>
           <h2 class="text-xl font-semibold mb-6 text-center">
             {{ isInitializing ? '初始化管理员账号' : '登录' }}
           </h2>
@@ -140,13 +139,6 @@ async function handleLogin(): Promise<void> {
             <p class="text-center text-sm text-slate-500 mt-4">
               {{ isInitializing ? '设置管理员账号开始使用' : '首次登录？请联系管理员初始化账号' }}
             </p>
-          </div>
-        </template>
-
-        <template v-else>
-          <div class="text-center">
-            <p class="text-slate-400 mb-4">正在检查登录状态...</p>
-            <div class="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto"></div>
           </div>
         </template>
       </div>
