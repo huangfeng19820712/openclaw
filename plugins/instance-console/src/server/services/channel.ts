@@ -38,7 +38,7 @@ export class ChannelService {
   /**
    * 添加渠道
    */
-  async addChannel(instanceId: string, input: ChannelCreateInput): Promise<ChannelConfig> {
+  async addChannel(instanceId: string, input: ChannelCreateInput): Promise<Omit<ChannelConfig, 'credentials'> & { credentials: { _hasCredentials: boolean } }> {
     await this.init();
 
     const channels = await this.getChannelsByInstance(instanceId);
@@ -120,15 +120,14 @@ export class ChannelService {
     await writeFile(filePath, JSON.stringify(channels, null, 2), 'utf-8');
   }
 
-  private sanitizeChannel(channel: ChannelConfig): ChannelConfig {
+  private sanitizeChannel(channel: ChannelConfig): Omit<ChannelConfig, 'credentials'> & { credentials: { _hasCredentials: boolean } } {
     const { credentials, ...safeChannel } = channel;
     return {
       ...safeChannel,
       credentials: {
-        // 只返回非敏感的字段标识
         _hasCredentials: Object.keys(credentials).length > 0,
       },
-    } as ChannelConfig;
+    };
   }
 
   private async testFeishu(credentials: Record<string, string>): Promise<{ success: boolean; message: string }> {
@@ -143,7 +142,7 @@ export class ChannelService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
       });
-      const data = await response.json();
+      const data = await response.json() as { code?: number; msg?: string };
       if (data.code === 0) {
         return { success: true, message: '连接成功' };
       }
@@ -164,7 +163,7 @@ export class ChannelService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appKey, appSecret }),
       });
-      const data = await response.json();
+      const data = await response.json() as { accessToken?: string };
       if (data.accessToken) {
         return { success: true, message: '连接成功' };
       }
@@ -181,9 +180,9 @@ export class ChannelService {
     }
     try {
       const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-      const data = await response.json();
+      const data = await response.json() as { ok?: boolean; result?: { username?: string } };
       if (data.ok) {
-        return { success: true, message: `连接成功: @${data.result.username}` };
+        return { success: true, message: `连接成功: @${data.result?.username}` };
       }
       return { success: false, message: '连接失败' };
     } catch (error) {
@@ -200,7 +199,7 @@ export class ChannelService {
       const response = await fetch('https://slack.com/api/auth.test', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await response.json();
+      const data = await response.json() as { ok?: boolean; user?: string };
       if (data.ok) {
         return { success: true, message: `连接成功: ${data.user}` };
       }
@@ -220,7 +219,7 @@ export class ChannelService {
         headers: { Authorization: `Bot ${botToken}` },
       });
       if (response.ok) {
-        const data = await response.json();
+        const data = await response.json() as { username?: string };
         return { success: true, message: `连接成功: ${data.username}` };
       }
       return { success: false, message: '连接失败' };

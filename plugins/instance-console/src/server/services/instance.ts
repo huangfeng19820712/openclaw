@@ -189,7 +189,6 @@ export class InstanceService {
       image: entry.image,
       createdAt: new Date(entry.createdAtMs).toISOString(),
       lastUsedAt: new Date(entry.lastUsedAtMs).toISOString(),
-      configHash: entry.configHash,
     };
   }
 }
