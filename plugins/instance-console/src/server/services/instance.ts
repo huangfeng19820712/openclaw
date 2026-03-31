@@ -160,7 +160,7 @@ export class InstanceService {
   }
 
   /**
-   * 删除实例
+   * 删除实例 - 调用 cleanup-instance.sh 脚本
    */
   async deleteInstance(sessionKey: string): Promise<boolean> {
     const instance = await this.getInstanceBySessionKey(sessionKey);
@@ -168,12 +168,45 @@ export class InstanceService {
       return false;
     }
 
-    try {
-      await this.containerService.removeContainer(instance.containerName);
-    } catch {
-      // 容器可能已经不存在
+    // 调用 cleanup-instance.sh 删除实例（使用 --force 跳过确认）
+    const result = await this.execScriptWithArgs(['--force', sessionKey]);
+
+    if (result.code !== 0) {
+      throw new Error(`删除实例失败: ${result.stderr || result.stdout}`);
     }
 
     return true;
+  }
+
+  /**
+   * 执行 Shell 脚本（带参数）
+   */
+  private async execScriptWithArgs(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      const proc = spawn('bash', [this.scriptPath, ...args], {
+        shell: false,
+        windowsHide: true,
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout?.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (code) => {
+        resolve({ code: code || 0, stdout, stderr });
+      });
+
+      proc.on('error', (err) => {
+        stderr += err.message;
+        resolve({ code: 1, stdout, stderr });
+      });
+    });
   }
 }

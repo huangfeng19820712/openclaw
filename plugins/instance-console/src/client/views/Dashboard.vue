@@ -123,7 +123,7 @@ function goToCreate(): void {
     <ConfirmDialog
       :show="showDeleteDialog"
       title="删除实例"
-      :message="`确定要删除实例 ${instanceToDelete} 吗？此操作不可恢复。`"
+      :message="`确定要删除实例 ${instanceToDelete} 吗？此操作将删除容器、网络以及 OpenClaw 工作目录（包括所有配置和数据），不可恢复！`"
       confirmText="删除"
       danger
       :requireInput="instanceToDelete || undefined"

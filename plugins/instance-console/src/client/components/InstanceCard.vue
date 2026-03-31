@@ -106,6 +106,13 @@ function handleView(): void {
       >
         🔄
       </button>
+      <button
+        @click="emit('delete', instance.sessionKey)"
+        class="btn btn-danger text-sm py-1.5 px-3"
+        title="删除"
+      >
+        🗑
+      </button>
     </div>
   </div>
 </template>
