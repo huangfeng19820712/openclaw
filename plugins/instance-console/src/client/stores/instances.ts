@@ -11,10 +11,7 @@ export interface Instance {
   image: string;
   createdAt: string;
   lastUsedAt: string;
-  env?: Record<string, string>;
-  idleTimeoutHours?: number;
-  networkMode?: string;
-  workdir?: string;
+  ports?: Record<string, string>;
 }
 
 export interface InstanceCreateInput {

@@ -64,10 +64,7 @@ export interface Instance {
   image: string;
   createdAt: string;
   lastUsedAt: string;
-  env?: Record<string, string>;
-  idleTimeoutHours?: number;
-  networkMode?: string;
-  workdir?: string;
+  ports?: Record<string, string>;  // 容器端口映射，如 { "18789/tcp": "0.0.0.0:18889" }
 }
 
 export interface InstanceCreateInput {

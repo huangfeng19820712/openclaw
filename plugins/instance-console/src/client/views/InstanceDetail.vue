@@ -175,6 +175,21 @@ function formatDate(dateStr: string): string {
         </div>
       </div>
 
+      <!-- 端口映射 -->
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-4">端口映射</h3>
+        <div v-if="!instance.ports || Object.keys(instance.ports).length === 0" class="text-slate-500 text-sm">
+          暂无端口映射
+        </div>
+        <div v-else class="space-y-2">
+          <div v-for="(hostPort, containerPort) in instance.ports" :key="containerPort" class="flex items-center gap-4 text-sm">
+            <span class="text-primary font-mono">{{ containerPort }}</span>
+            <span class="text-slate-400">→</span>
+            <span class="font-mono text-slate-300">{{ hostPort }}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 环境变量 -->
       <div class="card">
         <h3 class="text-lg font-semibold mb-4">环境变量</h3>

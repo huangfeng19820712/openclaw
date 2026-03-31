@@ -178,6 +178,32 @@ export class ContainerService {
   }
 
   /**
+   * 获取容器端口映射
+   * @returns 格式: { "18789/tcp": "0.0.0.0:18889", "18790/tcp": "0.0.0.0:18890" }
+   */
+  async getContainerPorts(containerName: string): Promise<Record<string, string>> {
+    try {
+      const { stdout, code } = await this.execDocker(['port', containerName]);
+      if (code !== 0 || !stdout.trim()) {
+        return {};
+      }
+
+      const ports: Record<string, string> = {};
+      stdout.trim().split('\n').forEach(line => {
+        // 格式: 18789/tcp -> 0.0.0.0:18889
+        const match = line.match(/^(\d+\/\w+)\s*->\s*(.+)$/);
+        if (match) {
+          ports[match[1]] = match[2];
+        }
+      });
+
+      return ports;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
    * 从 Docker 直接列出所有 OpenClaw 沙箱容器
    */
   async listSandboxContainers(): Promise<Array<{

@@ -52,9 +52,12 @@ export class InstanceService {
   async getInstances(): Promise<Instance[]> {
     const dockerContainers = await this.containerService.listSandboxContainers();
 
-    return dockerContainers.map(container => {
+    const instances = await Promise.all(dockerContainers.map(async container => {
       const status = container.status.toLowerCase().startsWith('up') ? 'running' :
                      container.status.includes('exited') || container.status.includes('Created') ? 'stopped' : 'error';
+
+      // 获取端口映射
+      const ports = await this.containerService.getContainerPorts(container.name);
 
       return {
         id: container.name,
@@ -66,8 +69,11 @@ export class InstanceService {
         lastUsedAt: container.labels['openclaw.lastUsedAtMs']
           ? new Date(parseInt(container.labels['openclaw.lastUsedAtMs'])).toISOString()
           : new Date().toISOString(),
+        ports,
       };
-    });
+    }));
+
+    return instances;
   }
 
   /**
@@ -88,6 +94,9 @@ export class InstanceService {
     const status = container.status.toLowerCase().startsWith('up') ? 'running' :
                    container.status.includes('exited') || container.status.includes('Created') ? 'stopped' : 'error';
 
+    // 获取端口映射
+    const ports = await this.containerService.getContainerPorts(container.name);
+
     return {
       id: container.name,
       sessionKey: container.labels['openclaw.sessionKey'] || container.name,
@@ -98,6 +107,7 @@ export class InstanceService {
       lastUsedAt: container.labels['openclaw.lastUsedAtMs']
         ? new Date(parseInt(container.labels['openclaw.lastUsedAtMs'])).toISOString()
         : new Date().toISOString(),
+      ports,
     };
   }
 

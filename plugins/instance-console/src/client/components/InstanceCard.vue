@@ -33,6 +33,13 @@ function getRelativeTime(dateStr: string): string {
   return '刚刚';
 }
 
+function getDisplayPorts(ports?: Record<string, string>): string {
+  if (!ports || Object.keys(ports).length === 0) return '无';
+  return Object.entries(ports)
+    .map(([containerPort, hostPort]) => `${containerPort} → ${hostPort}`)
+    .join(', ');
+}
+
 function handleView(): void {
   router.push(`/instances/${props.instance.sessionKey}`);
 }
@@ -50,8 +57,11 @@ function handleView(): void {
     <h3 class="font-semibold text-lg mb-1">
       {{ instance.displayName || instance.sessionKey }}
     </h3>
-    <p class="text-sm text-slate-400 mb-3">
+    <p class="text-sm text-slate-400 mb-1">
       Session: {{ instance.sessionKey }}
+    </p>
+    <p class="text-xs text-slate-500 mb-3">
+      端口: {{ getDisplayPorts(instance.ports) }}
     </p>
 
     <div class="grid grid-cols-2 gap-2 text-xs text-slate-500 mb-4">
