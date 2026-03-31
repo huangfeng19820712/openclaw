@@ -9,6 +9,7 @@ const authStore = useAuthStore();
 const navItems = [
   { name: '概览', path: '/', icon: '◉' },
   { name: '实例', path: '/instances', icon: '🖥' },
+  { name: '日志', path: '/logs', icon: '📋' },
   { name: '系统', path: '/settings', icon: '⚙' },
 ];
 

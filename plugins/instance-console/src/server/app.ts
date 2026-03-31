@@ -12,11 +12,13 @@ import { createChannelsRouter } from './routes/channels.js';
 import { createContainersRouter } from './routes/containers.js';
 import { createApiKeysRouter } from './routes/apikeys.js';
 import { createSystemRouter } from './routes/system.js';
+import { createOperationLogsRouter } from './routes/operationLogs.js';
 import type { UserService } from './services/user.js';
 import type { InstanceService } from './services/instance.js';
 import type { ModelService } from './services/model.js';
 import type { ChannelService } from './services/channel.js';
 import type { ContainerService } from './services/container.js';
+import type { OperationLogService } from './services/operationLog.js';
 import type { LoadedConfig } from '../config/loader.js';
 import type { JwtPayload } from '../shared/types.js';
 
@@ -30,6 +32,7 @@ export interface AppServices {
   modelService: ModelService;
   channelService: ChannelService;
   containerService: ContainerService;
+  operationLogService: OperationLogService;
 }
 
 export function createApp(services: AppServices, config: LoadedConfig): Express {
@@ -220,7 +223,7 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
   app.use('/api', jwtAuthMiddleware, channelsRouter);
 
   // 容器操作路由
-  const containersRouter = createContainersRouter(services.containerService);
+  const containersRouter = createContainersRouter(services.containerService, services.operationLogService);
   app.use('/api/containers', jwtAuthMiddleware, containersRouter);
 
   // API Key 路由
@@ -230,6 +233,10 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
   // 系统路由
   const systemRouter = createSystemRouter(services.containerService);
   app.use('/api/system', jwtAuthMiddleware, systemRouter);
+
+  // 操作日志路由
+  const operationLogsRouter = createOperationLogsRouter(services.operationLogService);
+  app.use('/api/operation-logs', jwtAuthMiddleware, operationLogsRouter);
 
   // SPA 路由 - 所有非 API 请求返回 index.html
   app.get('*', (req, res) => {

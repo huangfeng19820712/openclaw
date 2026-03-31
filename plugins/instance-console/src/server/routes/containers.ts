@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { ContainerService } from '../services/container.js';
-import { sessionKeyToContainerName } from '../../shared/utils.js';
+import type { OperationLogService } from '../services/operationLog.js';
 
-export function createContainersRouter(containerService: ContainerService) {
+export function createContainersRouter(containerService: ContainerService, operationLogService: OperationLogService) {
   const router = Router();
 
   /**
@@ -14,8 +14,8 @@ export function createContainersRouter(containerService: ContainerService) {
     try {
       const { name } = req.params;
 
-      // 支持使用 sessionKey 作为参数，自动转换为容器名
-      const containerName = name.startsWith('openclaw-sbx-') ? name : sessionKeyToContainerName(name);
+      // 直接使用传入的名称（容器名或 sessionKey）
+      const containerName = name;
 
       const status = await containerService.getContainerStatus(containerName);
       if (status === 'running') {
@@ -24,9 +24,12 @@ export function createContainersRouter(containerService: ContainerService) {
       }
 
       await containerService.startContainer(containerName);
+      await operationLogService.log('start', containerName, 'container', 'success');
 
       res.json({ ok: true, message: '容器已启动' });
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await operationLogService.log('start', req.params.name, 'container', 'failed', errorMsg);
       console.error('Start container error:', error);
       res.status(500).json({ ok: false, error: `启动容器失败: ${error}` });
     }
@@ -39,7 +42,7 @@ export function createContainersRouter(containerService: ContainerService) {
   router.post('/:name/stop', async (req: Request, res: Response) => {
     try {
       const { name } = req.params;
-      const containerName = name.startsWith('openclaw-sbx-') ? name : sessionKeyToContainerName(name);
+      const containerName = name;
 
       const status = await containerService.getContainerStatus(containerName);
       if (status === 'stopped' || status === 'unknown') {
@@ -48,9 +51,12 @@ export function createContainersRouter(containerService: ContainerService) {
       }
 
       await containerService.stopContainer(containerName);
+      await operationLogService.log('stop', containerName, 'container', 'success');
 
       res.json({ ok: true, message: '容器已停止' });
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await operationLogService.log('stop', req.params.name, 'container', 'failed', errorMsg);
       console.error('Stop container error:', error);
       res.status(500).json({ ok: false, error: `停止容器失败: ${error}` });
     }
@@ -63,12 +69,15 @@ export function createContainersRouter(containerService: ContainerService) {
   router.post('/:name/restart', async (req: Request, res: Response) => {
     try {
       const { name } = req.params;
-      const containerName = name.startsWith('openclaw-sbx-') ? name : sessionKeyToContainerName(name);
+      const containerName = name;
 
       await containerService.restartContainer(containerName);
+      await operationLogService.log('restart', containerName, 'container', 'success');
 
       res.json({ ok: true, message: '容器已重启' });
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await operationLogService.log('restart', req.params.name, 'container', 'failed', errorMsg);
       console.error('Restart container error:', error);
       res.status(500).json({ ok: false, error: `重启容器失败: ${error}` });
     }
@@ -81,7 +90,7 @@ export function createContainersRouter(containerService: ContainerService) {
   router.get('/:name/logs', async (req: Request, res: Response) => {
     try {
       const { name } = req.params;
-      const containerName = name.startsWith('openclaw-sbx-') ? name : sessionKeyToContainerName(name);
+      const containerName = name;
       const tail = parseInt(req.query.tail as string) || 100;
 
       const logs = await containerService.getContainerLogs(containerName, tail);
@@ -100,7 +109,7 @@ export function createContainersRouter(containerService: ContainerService) {
   router.get('/:name/status', async (req: Request, res: Response) => {
     try {
       const { name } = req.params;
-      const containerName = name.startsWith('openclaw-sbx-') ? name : sessionKeyToContainerName(name);
+      const containerName = name;
 
       const status = await containerService.getContainerStatus(containerName);
 

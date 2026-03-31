@@ -5,6 +5,7 @@ import { ContainerService } from './server/services/container.js';
 import { InstanceService } from './server/services/instance.js';
 import { ModelService } from './server/services/model.js';
 import { ChannelService } from './server/services/channel.js';
+import { OperationLogService } from './server/services/operationLog.js';
 import { generateId, ensureDir } from './shared/utils.js';
 import * as readline from 'readline';
 import { stdin as input, stdout as output } from 'process';
@@ -94,7 +95,8 @@ async function main(): Promise<void> {
     // 初始化服务
     const containerService = new ContainerService();
     const userService = new UserService(config);
-    const instanceService = new InstanceService(config, containerService);
+    const operationLogService = new OperationLogService(config);
+    const instanceService = new InstanceService(config, containerService, operationLogService);
     const modelService = new ModelService(config);
     const channelService = new ChannelService(config);
 
@@ -111,6 +113,7 @@ async function main(): Promise<void> {
         instanceService,
         modelService,
         channelService,
+        operationLogService,
       },
       config
     );

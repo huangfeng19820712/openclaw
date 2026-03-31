@@ -2,15 +2,18 @@ import { spawn } from 'child_process';
 import type { Instance, InstanceCreateInput, InstanceUpdateInput } from '../../shared/types.js';
 import type { LoadedConfig } from '../../config/loader.js';
 import type { ContainerService } from './container.js';
+import type { OperationLogService } from './operationLog.js';
 
 export class InstanceService {
   private config: LoadedConfig;
   private containerService: ContainerService;
+  private operationLogService: OperationLogService;
   private readonly scriptPath = '/data/workspace/openclaw/docker-instance-setup.sh';
 
-  constructor(config: LoadedConfig, containerService: ContainerService) {
+  constructor(config: LoadedConfig, containerService: ContainerService, operationLogService: OperationLogService) {
     this.config = config;
     this.containerService = containerService;
+    this.operationLogService = operationLogService;
   }
 
   /**
@@ -133,12 +136,15 @@ export class InstanceService {
     const result = await this.execScript(env);
 
     if (result.code !== 0) {
+      await this.operationLogService.log('create', instanceId, 'instance', 'failed', result.stderr || result.stdout);
       throw new Error(`创建实例失败: ${result.stderr || result.stdout}`);
     }
 
     // 从输出中提取信息
     const now = new Date().toISOString();
     const containerName = `openclaw-${instanceId}-openclaw-gateway-1`;
+
+    await this.operationLogService.log('create', instanceId, 'instance', 'success');
 
     return {
       id: containerName,
@@ -172,9 +178,11 @@ export class InstanceService {
     const result = await this.execScriptWithArgs(['--force', sessionKey]);
 
     if (result.code !== 0) {
+      await this.operationLogService.log('delete', sessionKey, 'instance', 'failed', result.stderr || result.stdout);
       throw new Error(`删除实例失败: ${result.stderr || result.stdout}`);
     }
 
+    await this.operationLogService.log('delete', sessionKey, 'instance', 'success');
     return true;
   }
 
