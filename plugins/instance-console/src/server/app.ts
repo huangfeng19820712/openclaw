@@ -11,6 +11,7 @@ import { createModelsRouter } from './routes/models.js';
 import { createChannelsRouter } from './routes/channels.js';
 import { createContainersRouter } from './routes/containers.js';
 import { createApiKeysRouter } from './routes/apikeys.js';
+import { createSystemRouter } from './routes/system.js';
 import type { UserService } from './services/user.js';
 import type { InstanceService } from './services/instance.js';
 import type { ModelService } from './services/model.js';
@@ -225,6 +226,10 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
   // API Key 路由
   const apiKeysRouter = createApiKeysRouter(services.userService);
   app.use('/api/apikeys', jwtAuthMiddleware, apiKeysRouter);
+
+  // 系统路由
+  const systemRouter = createSystemRouter(services.containerService);
+  app.use('/api/system', jwtAuthMiddleware, systemRouter);
 
   // SPA 路由 - 所有非 API 请求返回 index.html
   app.get('*', (req, res) => {

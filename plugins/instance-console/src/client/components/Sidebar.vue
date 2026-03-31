@@ -8,14 +8,11 @@ const authStore = useAuthStore();
 
 const navItems = [
   { name: '概览', path: '/', icon: '◉' },
-  { name: '实例', path: '/', icon: '🖥' },
+  { name: '实例', path: '/instances', icon: '🖥' },
   { name: '系统', path: '/settings', icon: '⚙' },
 ];
 
 function isActive(path: string): boolean {
-  if (path === '/') {
-    return route.path === '/' || route.path.startsWith('/instances');
-  }
   return route.path === path;
 }
 

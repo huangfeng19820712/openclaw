@@ -204,6 +204,105 @@ export class ContainerService {
   }
 
   /**
+   * 获取 Docker 系统信息
+   */
+  async getDockerInfo(): Promise<{
+    version: string;
+    containers: number;
+    running: number;
+    stopped: number;
+  } | null> {
+    try {
+      const versionResult = await this.execDocker(['version', '--format', '{{.Server.Version}}']);
+      const psResult = await this.execDocker(['ps', '-a', '--format', '{{.Status}}']);
+
+      if (versionResult.code !== 0) {
+        return null;
+      }
+
+      const statusLines = psResult.stdout.trim().split('\n').filter(l => l);
+      let running = 0, stopped = 0;
+      for (const status of statusLines) {
+        if (status.startsWith('Up')) running++;
+        else if (status) stopped++;
+      }
+
+      return {
+        version: versionResult.stdout.trim(),
+        containers: statusLines.length,
+        running,
+        stopped,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 获取磁盘使用信息
+   */
+  async getDiskUsage(): Promise<{
+    total: number;
+    used: number;
+    available: number;
+    percent: number;
+  } | null> {
+    try {
+      const { stdout } = await new Promise<{ stdout: string }>((resolve) => {
+        const proc = spawn('df', ['-B1', '/'], { shell: false, windowsHide: true });
+        let stdout = '';
+        proc.stdout?.on('data', (data) => { stdout += data.toString(); });
+        proc.on('close', () => resolve({ stdout }));
+      });
+
+      const lines = stdout.trim().split('\n');
+      if (lines.length >= 2) {
+        const parts = lines[1].split(/\s+/);
+        const total = parseInt(parts[1]) || 0;
+        const used = parseInt(parts[2]) || 0;
+        const available = parseInt(parts[3]) || 0;
+        const percent = total > 0 ? Math.round((used / total) * 100) : 0;
+        return { total, used, available, percent };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 获取内存使用信息
+   */
+  async getMemoryUsage(): Promise<{
+    total: number;
+    used: number;
+    available: number;
+    percent: number;
+  } | null> {
+    try {
+      const { stdout } = await new Promise<{ stdout: string }>((resolve) => {
+        const proc = spawn('free', ['-b'], { shell: false, windowsHide: true });
+        let stdout = '';
+        proc.stdout?.on('data', (data) => { stdout += data.toString(); });
+        proc.on('close', () => resolve({ stdout }));
+      });
+
+      const lines = stdout.trim().split('\n');
+      if (lines.length >= 2) {
+        const parts = lines[1].split(/\s+/);
+        const total = parseInt(parts[1]) || 0;
+        const used = parseInt(parts[2]) || 0;
+        const available = parseInt(parts[3]) || 0;
+        const percent = total > 0 ? Math.round((used / total) * 100) : 0;
+        return { total, used, available, percent };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * 从 Docker 直接列出所有 OpenClaw 沙箱容器
    */
   async listSandboxContainers(): Promise<Array<{
