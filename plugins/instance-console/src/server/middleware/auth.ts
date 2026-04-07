@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import type { JwtPayload, ApiKey, User } from '../../shared/types.js';
 import { readFileIfExists, expandHomePath, safeJsonParse } from '../../shared/utils.js';
 
@@ -108,16 +109,20 @@ async function checkApiKey(req: Request): Promise<void> {
 
     const apiKeys: ApiKey[] = safeJsonParse(content, []);
 
-    // 简单的密钥比较（生产环境应该用 timing-safe 比较）
+    // 查找前缀匹配的 API Key
     const matchedKey = apiKeys.find((key) => {
       return key.keyPrefix && apiKeyHeader.startsWith(key.keyPrefix);
     });
 
-    if (matchedKey) {
-      req.apiKey = matchedKey;
-      // 更新最后使用时间
-      matchedKey.lastUsedAt = new Date().toISOString();
-      // TODO: 保存更新后的 API Key
+    if (matchedKey && matchedKey.keyHash) {
+      // 使用 bcrypt 验证完整的 API Key
+      const isValid = await bcrypt.compare(apiKeyHeader, matchedKey.keyHash);
+      if (isValid) {
+        req.apiKey = matchedKey;
+        // 更新最后使用时间
+        matchedKey.lastUsedAt = new Date().toISOString();
+        // TODO: 保存更新后的 API Key
+      }
     }
   } catch {
     // 忽略错误

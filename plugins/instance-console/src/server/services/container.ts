@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { execCommand, formatBytes, parseDfOutput, parseFreeOutput } from '../../shared/utils.js';
 import type { ContainerLogs } from '../../shared/types.js';
 
 export interface CreateContainerParams {
@@ -16,34 +16,7 @@ export class ContainerService {
    * 执行 Docker 命令
    */
   private async execDocker(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-    return new Promise((resolve) => {
-      // 使用数组形式，让 spawn 直接调用 execvp，不经过 shell
-      // 这样可以避免 shell 对 {{.Names}} 等 Go 模板语法的解析
-      const proc = spawn('docker', args, {
-        shell: false,
-        windowsHide: true,
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout?.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr?.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on('close', (code) => {
-        resolve({ stdout, stderr, code: code || 0 });
-      });
-
-      proc.on('error', (err) => {
-        stderr += err.message;
-        resolve({ stdout, stderr, code: 1 });
-      });
-    });
+    return execCommand('docker', args);
   }
 
   /**
@@ -248,23 +221,8 @@ export class ContainerService {
     percent: number;
   } | null> {
     try {
-      const { stdout } = await new Promise<{ stdout: string }>((resolve) => {
-        const proc = spawn('df', ['-B1', '/'], { shell: false, windowsHide: true });
-        let stdout = '';
-        proc.stdout?.on('data', (data) => { stdout += data.toString(); });
-        proc.on('close', () => resolve({ stdout }));
-      });
-
-      const lines = stdout.trim().split('\n');
-      if (lines.length >= 2) {
-        const parts = lines[1].split(/\s+/);
-        const total = parseInt(parts[1]) || 0;
-        const used = parseInt(parts[2]) || 0;
-        const available = parseInt(parts[3]) || 0;
-        const percent = total > 0 ? Math.round((used / total) * 100) : 0;
-        return { total, used, available, percent };
-      }
-      return null;
+      const { stdout } = await execCommand('df', ['-B1', '/']);
+      return parseDfOutput(stdout);
     } catch {
       return null;
     }
@@ -280,23 +238,8 @@ export class ContainerService {
     percent: number;
   } | null> {
     try {
-      const { stdout } = await new Promise<{ stdout: string }>((resolve) => {
-        const proc = spawn('free', ['-b'], { shell: false, windowsHide: true });
-        let stdout = '';
-        proc.stdout?.on('data', (data) => { stdout += data.toString(); });
-        proc.on('close', () => resolve({ stdout }));
-      });
-
-      const lines = stdout.trim().split('\n');
-      if (lines.length >= 2) {
-        const parts = lines[1].split(/\s+/);
-        const total = parseInt(parts[1]) || 0;
-        const used = parseInt(parts[2]) || 0;
-        const available = parseInt(parts[3]) || 0;
-        const percent = total > 0 ? Math.round((used / total) * 100) : 0;
-        return { total, used, available, percent };
-      }
-      return null;
+      const { stdout } = await execCommand('free', ['-b']);
+      return parseFreeOutput(stdout);
     } catch {
       return null;
     }

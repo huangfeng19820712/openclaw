@@ -1,4 +1,6 @@
+import { spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
+import type { SpawnOptions } from 'child_process';
 
 /**
  * 生成 UUID v4
@@ -135,4 +137,84 @@ export async function getFileMtime(filePath: string): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * 执行 Shell 命令的公共方法
+ */
+export async function execCommand(
+  command: string,
+  args: string[],
+  options?: SpawnOptions
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn(command, args, {
+      shell: false,
+      windowsHide: true,
+      ...options,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      resolve({ code: code || 0, stdout, stderr });
+    });
+
+    proc.on('error', (err) => {
+      stderr += err.message;
+      resolve({ code: 1, stdout, stderr });
+    });
+  });
+}
+
+/**
+ * 格式化字节数为可读字符串
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/**
+ * 解析 df 命令输出获取磁盘使用情况
+ */
+export function parseDfOutput(output: string): { total: number; used: number; available: number; percent: number } | null {
+  const lines = output.trim().split('\n');
+  if (lines.length < 2) return null;
+
+  const parts = lines[1].split(/\s+/);
+  const total = parseInt(parts[1]) || 0;
+  const used = parseInt(parts[2]) || 0;
+  const available = parseInt(parts[3]) || 0;
+  const percent = total > 0 ? Math.round((used / total) * 100) : 0;
+
+  return { total, used, available, percent };
+}
+
+/**
+ * 解析 free 命令输出获取内存使用情况
+ */
+export function parseFreeOutput(output: string): { total: number; used: number; available: number; percent: number } | null {
+  const lines = output.trim().split('\n');
+  if (lines.length < 2) return null;
+
+  const parts = lines[1].split(/\s+/);
+  const total = parseInt(parts[1]) || 0;
+  const used = parseInt(parts[2]) || 0;
+  const available = parseInt(parts[3]) || 0;
+  const percent = total > 0 ? Math.round((used / total) * 100) : 0;
+
+  return { total, used, available, percent };
 }

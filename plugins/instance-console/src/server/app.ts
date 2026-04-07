@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import { corsMiddleware } from './middleware/cors.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { jwtAuth } from './middleware/auth.js';
+import { rateLimit } from './middleware/rateLimit.js';
 import { createInstancesRouter } from './routes/instances.js';
 import { createModelsRouter } from './routes/models.js';
 import { createChannelsRouter } from './routes/channels.js';
@@ -56,8 +57,8 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
   // ========== 认证路由 ==========
   const { userService } = services;
 
-  // POST /api/auth/login - 公开
-  app.post('/api/auth/login', async (req, res) => {
+  // POST /api/auth/login - 公开（限流：5次/分钟）
+  app.post('/api/auth/login', rateLimit(5, 60000), async (req, res) => {
     try {
       const { username, password } = req.body;
 
@@ -97,8 +98,8 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
     }
   });
 
-  // POST /api/auth/init - 公开
-  app.post('/api/auth/init', async (req, res) => {
+  // POST /api/auth/init - 公开（限流：5次/分钟）
+  app.post('/api/auth/init', rateLimit(5, 60000), async (req, res) => {
     try {
       const { username, password } = req.body;
 

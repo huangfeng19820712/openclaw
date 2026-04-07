@@ -18,10 +18,15 @@ export class InstanceService {
 
   /**
    * 执行 Shell 脚本
+   * @param scriptArgs 脚本参数
+   * @param env 环境变量
    */
-  private async execScript(env: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
+  private async execScript(
+    scriptArgs: string[] = [],
+    env: Record<string, string> = {}
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve) => {
-      const proc = spawn('bash', [this.scriptPath], {
+      const proc = spawn('bash', [this.scriptPath, ...scriptArgs], {
         env: { ...process.env, ...env },
         shell: false,
         windowsHide: true,
@@ -133,7 +138,7 @@ export class InstanceService {
       env.OPENCLAW_PORT_OFFSET = String(input.portOffset);
     }
 
-    const result = await this.execScript(env);
+    const result = await this.execScript([], env);
 
     if (result.code !== 0) {
       await this.operationLogService.log('create', instanceId, 'instance', 'failed', result.stderr || result.stdout);
@@ -175,7 +180,7 @@ export class InstanceService {
     }
 
     // 调用 cleanup-instance.sh 删除实例（使用 --force 跳过确认）
-    const result = await this.execScriptWithArgs(['--force', sessionKey]);
+    const result = await this.execScript(['--force', sessionKey]);
 
     if (result.code !== 0) {
       await this.operationLogService.log('delete', sessionKey, 'instance', 'failed', result.stderr || result.stdout);
@@ -186,35 +191,4 @@ export class InstanceService {
     return true;
   }
 
-  /**
-   * 执行 Shell 脚本（带参数）
-   */
-  private async execScriptWithArgs(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-    return new Promise((resolve) => {
-      const proc = spawn('bash', [this.scriptPath, ...args], {
-        shell: false,
-        windowsHide: true,
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout?.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr?.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on('close', (code) => {
-        resolve({ code: code || 0, stdout, stderr });
-      });
-
-      proc.on('error', (err) => {
-        stderr += err.message;
-        resolve({ code: 1, stdout, stderr });
-      });
-    });
-  }
 }
