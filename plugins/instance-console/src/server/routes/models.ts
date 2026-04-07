@@ -1,54 +1,153 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
-import type { ModelService } from '../services/model.js';
+import type { ModelService, ProviderConfig, ModelDefinitionConfig } from '../services/model.js';
+import { PROVIDER_TEMPLATES, PREDEFINED_MODELS } from '../services/model.js';
 
 export function createModelsRouter(modelService: ModelService) {
   const router = Router();
 
   /**
-   * GET /api/instances/:id/models
-   * 获取实例的模型列表
+   * GET /api/models/catalog
+   * 获取可用的模型目录
    */
-  router.get('/:id/models', async (req: Request, res: Response) => {
+  router.get('/catalog', async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
-      const models = await modelService.getModelsByInstance(id);
+      // 返回预定义的 provider 模板和模型列表
+      const catalog = Object.entries(PROVIDER_TEMPLATES).map(([id, template]) => ({
+        id,
+        name: template.name,
+        baseUrl: template.baseUrl,
+        api: template.api,
+        models: PREDEFINED_MODELS[id] || [],
+      }));
 
       res.json({
         ok: true,
-        data: {
-          items: models,
-          total: models.length,
-        },
+        data: catalog,
       });
     } catch (error) {
-      console.error('Get models error:', error);
-      res.status(500).json({ ok: false, error: '获取模型列表失败' });
+      console.error('Get catalog error:', error);
+      res.status(500).json({ ok: false, error: '获取模型目录失败' });
     }
   });
 
   /**
-   * POST /api/instances/:id/models
-   * 添加模型
+   * GET /api/models/providers
+   * 获取已配置的 providers
    */
-  router.post('/:id/models', async (req: Request, res: Response) => {
+  router.get('/providers', async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
-      const { type, modelIdentifier, apiKey, parameters } = req.body;
+      const providers = await modelService.getConfiguredProviders();
+      res.json({
+        ok: true,
+        data: providers,
+      });
+    } catch (error) {
+      console.error('Get providers error:', error);
+      res.status(500).json({ ok: false, error: '获取 providers 失败' });
+    }
+  });
 
-      if (!type || !modelIdentifier) {
-        res.status(400).json({ ok: false, error: '模型类型和标识符不能为空' });
+  /**
+   * GET /api/models/providers/:providerId
+   * 获取 provider 详情
+   */
+  router.get('/providers/:providerId', async (req: Request, res: Response) => {
+    try {
+      const { providerId } = req.params;
+      const provider = await modelService.getProvider(providerId);
+
+      if (!provider) {
+        res.status(404).json({ ok: false, error: 'Provider 不存在' });
         return;
       }
 
-      const model = await modelService.addModel(id, {
-        type,
-        modelIdentifier,
+      // 获取解密后的 API Key
+      const apiKey = await modelService.getDecryptedApiKey(providerId);
+
+      res.json({
+        ok: true,
+        data: {
+          ...provider,
+          apiKey: apiKey || undefined,
+        },
+      });
+    } catch (error) {
+      console.error('Get provider error:', error);
+      res.status(500).json({ ok: false, error: '获取 Provider 详情失败' });
+    }
+  });
+
+  /**
+   * POST /api/models/providers
+   * 添加或更新 provider
+   */
+  router.post('/providers', async (req: Request, res: Response) => {
+    try {
+      const { providerId, baseUrl, apiKey, api, models } = req.body;
+
+      if (!providerId || !baseUrl) {
+        res.status(400).json({ ok: false, error: 'Provider ID 和 baseUrl 不能为空' });
+        return;
+      }
+
+      const provider = await modelService.saveProvider(providerId, {
+        baseUrl,
         apiKey,
-        parameters,
+        api,
+        models: models || [],
       });
 
-      res.status(201).json({ ok: true, data: model });
+      res.status(201).json({ ok: true, data: provider });
+    } catch (error) {
+      console.error('Save provider error:', error);
+      res.status(500).json({ ok: false, error: '保存 Provider 失败' });
+    }
+  });
+
+  /**
+   * DELETE /api/models/providers/:providerId
+   * 删除 provider
+   */
+  router.delete('/providers/:providerId', async (req: Request, res: Response) => {
+    try {
+      const { providerId } = req.params;
+      const deleted = await modelService.deleteProvider(providerId);
+
+      if (!deleted) {
+        res.status(404).json({ ok: false, error: 'Provider 不存在' });
+        return;
+      }
+
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Delete provider error:', error);
+      res.status(500).json({ ok: false, error: '删除 Provider 失败' });
+    }
+  });
+
+  /**
+   * POST /api/models/providers/:providerId/models
+   * 添加模型到 provider
+   */
+  router.post('/providers/:providerId/models', async (req: Request, res: Response) => {
+    try {
+      const { providerId } = req.params;
+      const model: ModelDefinitionConfig = req.body;
+
+      if (!model.id) {
+        res.status(400).json({ ok: false, error: '模型 ID 不能为空' });
+        return;
+      }
+
+      const success = await modelService.addModelToProvider(providerId, model);
+
+      if (!success) {
+        res.status(404).json({ ok: false, error: 'Provider 不存在' });
+        return;
+      }
+
+      res.status(201).json({ ok: true });
     } catch (error) {
       console.error('Add model error:', error);
       res.status(500).json({ ok: false, error: '添加模型失败' });
@@ -56,65 +155,16 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * GET /api/instances/:id/models/:modelId
-   * 获取模型详情
+   * DELETE /api/models/providers/:providerId/models/:modelId
+   * 从 provider 移除模型
    */
-  router.get('/:id/models/:modelId', async (req: Request, res: Response) => {
+  router.delete('/providers/:providerId/models/:modelId', async (req: Request, res: Response) => {
     try {
-      const { id, modelId } = req.params;
-      const model = await modelService.getModel(id, modelId);
-
-      if (!model) {
-        res.status(404).json({ ok: false, error: '模型不存在' });
-        return;
-      }
-
-      res.json({ ok: true, data: model });
-    } catch (error) {
-      console.error('Get model error:', error);
-      res.status(500).json({ ok: false, error: '获取模型详情失败' });
-    }
-  });
-
-  /**
-   * PUT /api/instances/:id/models/:modelId
-   * 更新模型
-   */
-  router.put('/:id/models/:modelId', async (req: Request, res: Response) => {
-    try {
-      const { id, modelId } = req.params;
-      const { type, modelIdentifier, apiKey, parameters } = req.body;
-
-      const model = await modelService.updateModel(id, modelId, {
-        type,
-        modelIdentifier,
-        apiKey,
-        parameters,
-      });
-
-      if (!model) {
-        res.status(404).json({ ok: false, error: '模型不存在' });
-        return;
-      }
-
-      res.json({ ok: true, data: model });
-    } catch (error) {
-      console.error('Update model error:', error);
-      res.status(500).json({ ok: false, error: '更新模型失败' });
-    }
-  });
-
-  /**
-   * DELETE /api/instances/:id/models/:modelId
-   * 移除模型
-   */
-  router.delete('/:id/models/:modelId', async (req: Request, res: Response) => {
-    try {
-      const { id, modelId } = req.params;
-      const deleted = await modelService.removeModel(id, modelId);
+      const { providerId, modelId } = req.params;
+      const deleted = await modelService.removeModelFromProvider(providerId, modelId);
 
       if (!deleted) {
-        res.status(404).json({ ok: false, error: '模型不存在' });
+        res.status(404).json({ ok: false, error: 'Provider 或模型不存在' });
         return;
       }
 

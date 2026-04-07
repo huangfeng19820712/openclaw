@@ -1,147 +1,352 @@
-import bcrypt from 'bcryptjs';
-import { readFileIfExists, ensureDir, expandHomePath, generateId } from '../../shared/utils.js';
-import type { ModelConfig, ModelCreateInput } from '../../shared/types.js';
+import { readFileIfExists, expandHomePath, generateId } from '../../shared/utils.js';
 import type { LoadedConfig } from '../../config/loader.js';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile } from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
+
+// Provider 定义
+export interface ProviderConfig {
+  baseUrl: string;
+  apiKey?: string;  // 加密存储
+  auth?: string;
+  api?: string;
+  models: ModelDefinitionConfig[];
+}
+
+export interface ModelDefinitionConfig {
+  id: string;
+  name: string;
+  api?: string;
+  reasoning?: boolean;
+  input?: string[];
+  cost?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+export interface OpenClawModelsConfig {
+  mode?: 'merge' | 'replace';
+  providers?: Record<string, ProviderConfig>;
+}
+
+// API Key 加密
+const ENCRYPTION_KEY = crypto.scryptSync('instance-console-models', 'salt', 32);
+
+function encryptApiKey(apiKey: string): string {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(apiKey, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted;
+}
+
+function decryptApiKey(encrypted: string): string {
+  try {
+    const [ivHex, encryptedData] = encrypted.split(':');
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch {
+    return '';
+  }
+}
+
+interface OpenClawConfigRoot {
+  models?: OpenClawModelsConfig;
+  [key: string]: unknown;
+}
 
 export class ModelService {
   private config: LoadedConfig;
-  private modelsDir: string;
+  private configPath: string;
 
   constructor(config: LoadedConfig) {
     this.config = config;
-    this.modelsDir = expandHomePath(`${config.openclaw.configDir}/models`);
+    this.configPath = path.join(expandHomePath(config.openclaw.configDir), 'openclaw.json');
   }
 
   /**
-   * 初始化模型目录
+   * 初始化 - 新版本不需要初始化操作
    */
   async init(): Promise<void> {
-    await ensureDir(this.modelsDir);
+    // No-op for new version
   }
 
   /**
-   * 获取实例的模型列表
+   * 读取 openclaw.json 配置
    */
-  async getModelsByInstance(instanceId: string): Promise<ModelConfig[]> {
-    const filePath = this.getModelFilePath(instanceId);
-    const content = await readFileIfExists(filePath);
+  private async readOpenClawConfig(): Promise<OpenClawConfigRoot> {
+    const content = await readFileIfExists(this.configPath);
     if (!content) {
-      return [];
+      return {};
     }
     try {
-      return JSON.parse(content);
+      return JSON.parse(content) as OpenClawConfigRoot;
     } catch {
-      return [];
+      return {};
     }
   }
 
   /**
-   * 添加模型
+   * 写入 openclaw.json 配置
    */
-  async addModel(instanceId: string, input: ModelCreateInput): Promise<ModelConfig> {
-    await this.init();
-
-    const models = await this.getModelsByInstance(instanceId);
-
-    const model: ModelConfig = {
-      id: generateId(),
-      instanceId,
-      type: input.type,
-      modelIdentifier: input.modelIdentifier,
-      apiKey: input.apiKey ? await this.encrypt(input.apiKey) : undefined,
-      parameters: input.parameters,
-      createdAt: new Date().toISOString(),
-    };
-
-    models.push(model);
-    await this.saveModels(instanceId, models);
-
-    return this.sanitizeModel(model);
+  private async writeOpenClawConfig(config: OpenClawConfigRoot): Promise<void> {
+    const dir = path.dirname(this.configPath);
+    const { ensureDir } = await import('../../shared/utils.js');
+    await ensureDir(dir);
+    await writeFile(this.configPath, JSON.stringify(config, null, 2), 'utf-8');
   }
 
   /**
-   * 移除模型
+   * 获取所有已配置的 providers
    */
-  async removeModel(instanceId: string, modelId: string): Promise<boolean> {
-    const models = await this.getModelsByInstance(instanceId);
-    const index = models.findIndex((m) => m.id === modelId);
+  async getConfiguredProviders(): Promise<Array<{ id: string; baseUrl: string; modelCount: number; hasApiKey: boolean }>> {
+    const config = await this.readOpenClawConfig();
+    const models = config.models as OpenClawModelsConfig | undefined;
 
-    if (index === -1) {
+    if (!models?.providers) {
+      return [];
+    }
+
+    return Object.entries(models.providers).map(([id, provider]) => ({
+      id,
+      baseUrl: provider.baseUrl || '',
+      modelCount: provider.models?.length || 0,
+      hasApiKey: Boolean(provider.apiKey),
+    }));
+  }
+
+  /**
+   * 获取 provider 的详细信息
+   */
+  async getProvider(providerId: string): Promise<ProviderConfig | null> {
+    const config = await this.readOpenClawConfig();
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]) {
+      return null;
+    }
+
+    return models.providers[providerId];
+  }
+
+  /**
+   * 添加或更新 provider
+   */
+  async saveProvider(providerId: string, provider: Omit<ProviderConfig, 'apiKey'> & { apiKey?: string }): Promise<ProviderConfig> {
+    const config = await this.readOpenClawConfig();
+
+    if (!config.models) {
+      config.models = { mode: 'merge', providers: {} };
+    }
+    if (!config.models.providers) {
+      config.models.providers = {};
+    }
+
+    // 加密 API Key
+    const encryptedApiKey = provider.apiKey ? encryptApiKey(provider.apiKey) : undefined;
+
+    config.models.providers[providerId] = {
+      baseUrl: provider.baseUrl,
+      apiKey: encryptedApiKey,
+      auth: provider.auth,
+      api: provider.api,
+      models: provider.models || [],
+    };
+
+    await this.writeOpenClawConfig(config);
+
+    // 返回时隐藏 API Key
+    const saved = config.models.providers[providerId];
+    return {
+      ...saved,
+      apiKey: undefined,
+    };
+  }
+
+  /**
+   * 删除 provider
+   */
+  async deleteProvider(providerId: string): Promise<boolean> {
+    const config = await this.readOpenClawConfig();
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]) {
       return false;
     }
 
-    models.splice(index, 1);
-    await this.saveModels(instanceId, models);
+    delete models.providers[providerId];
+    await this.writeOpenClawConfig(config);
     return true;
   }
 
   /**
-   * 获取模型（包含敏感信息）
+   * 添加模型到 provider
    */
-  async getModel(instanceId: string, modelId: string): Promise<ModelConfig | null> {
-    const models = await this.getModelsByInstance(instanceId);
-    const model = models.find((m) => m.id === modelId);
-    return model || null;
+  async addModelToProvider(
+    providerId: string,
+    model: ModelDefinitionConfig
+  ): Promise<boolean> {
+    const config = await this.readOpenClawConfig();
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]) {
+      return false;
+    }
+
+    // 检查模型是否已存在
+    const existingIndex = models.providers[providerId].models.findIndex(m => m.id === model.id);
+    if (existingIndex >= 0) {
+      // 更新现有模型
+      models.providers[providerId].models[existingIndex] = model;
+    } else {
+      // 添加新模型
+      models.providers[providerId].models.push(model);
+    }
+
+    await this.writeOpenClawConfig(config);
+    return true;
   }
 
   /**
-   * 更新模型
+   * 从 provider 移除模型
    */
-  async updateModel(
-    instanceId: string,
-    modelId: string,
-    updates: Partial<ModelCreateInput>
-  ): Promise<ModelConfig | null> {
-    const models = await this.getModelsByInstance(instanceId);
-    const index = models.findIndex((m) => m.id === modelId);
+  async removeModelFromProvider(providerId: string, modelId: string): Promise<boolean> {
+    const config = await this.readOpenClawConfig();
+    const models = config.models as OpenClawModelsConfig | undefined;
 
-    if (index === -1) {
+    if (!models?.providers?.[providerId]) {
+      return false;
+    }
+
+    const modelIndex = models.providers[providerId].models.findIndex(m => m.id === modelId);
+    if (modelIndex < 0) {
+      return false;
+    }
+
+    models.providers[providerId].models.splice(modelIndex, 1);
+    await this.writeOpenClawConfig(config);
+    return true;
+  }
+
+  /**
+   * 解密并返回 provider 的 API Key
+   */
+  async getDecryptedApiKey(providerId: string): Promise<string | null> {
+    const config = await this.readOpenClawConfig();
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]?.apiKey) {
       return null;
     }
 
-    if (updates.type) models[index].type = updates.type;
-    if (updates.modelIdentifier) models[index].modelIdentifier = updates.modelIdentifier;
-    if (updates.apiKey) models[index].apiKey = await this.encrypt(updates.apiKey);
-    if (updates.parameters) models[index].parameters = updates.parameters;
-
-    await this.saveModels(instanceId, models);
-    return this.sanitizeModel(models[index]);
-  }
-
-  /**
-   * 解密 API Key
-   */
-  async decryptApiKey(encryptedKey: string): Promise<string> {
-    // 简单实现：实际生产环境应该使用更安全的方式
-    // 这里用 bcrypt 的反向逻辑做占位，实际应该用 crypto
-    try {
-      // 由于 bcrypt 是单向哈希，这里返回原始值的占位符
-      // 实际场景中应该使用 crypto-js 或类似库
-      return encryptedKey;
-    } catch {
-      return encryptedKey;
-    }
-  }
-
-  private getModelFilePath(instanceId: string): string {
-    return `${this.modelsDir}/${instanceId}.json`;
-  }
-
-  private async saveModels(instanceId: string, models: ModelConfig[]): Promise<void> {
-    const filePath = this.getModelFilePath(instanceId);
-    await writeFile(filePath, JSON.stringify(models, null, 2), 'utf-8');
-  }
-
-  private async encrypt(value: string): Promise<string> {
-    // 占位实现：实际应该使用 crypto-js 或 Node.js crypto
-    // bcrypt 可以用于加密，但主要用途是哈希
-    const hash = await bcrypt.hash(value, 10);
-    return `enc:${hash}`;
-  }
-
-  private sanitizeModel(model: ModelConfig): ModelConfig {
-    const { apiKey, ...safeModel } = model;
-    return safeModel as ModelConfig;
+    return decryptApiKey(models.providers[providerId].apiKey!);
   }
 }
+
+// 预定义的 provider 配置模板
+export const PROVIDER_TEMPLATES: Record<string, {
+  name: string;
+  baseUrl: string;
+  api: string;
+  defaultModelId: string;
+}> = {
+  'openai': {
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    api: 'openai-responses',
+    defaultModelId: 'gpt-4o',
+  },
+  'anthropic': {
+    name: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    api: 'anthropic-messages',
+    defaultModelId: 'claude-3-5-sonnet-latest',
+  },
+  'google': {
+    name: 'Google AI',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    api: 'google-generative-ai',
+    defaultModelId: 'gemini-2.0-flash',
+  },
+  'moonshot': {
+    name: 'Moonshot (Kimi)',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    api: 'openai-completions',
+    defaultModelId: 'kimi-k2.5',
+  },
+  'minimax': {
+    name: 'MiniMax',
+    baseUrl: 'https://api.minimaxi.com/anthropic',
+    api: 'anthropic-messages',
+    defaultModelId: 'MiniMax-M2.5',
+  },
+  'qianfan': {
+    name: '百度千帆',
+    baseUrl: 'https://qianfan.baidubce.com/v2',
+    api: 'openai-completions',
+    defaultModelId: 'ernie-4.0-8k-latest',
+  },
+  'zhipuai': {
+    name: '智谱 AI',
+    baseUrl: 'https://open.bigmodel.cn/api/cogagent/v2',
+    api: 'openai-completions',
+    defaultModelId: 'glm-4',
+  },
+  'ollama': {
+    name: 'Ollama (本地)',
+    baseUrl: 'http://localhost:11434/v1',
+    api: 'openai-completions',
+    defaultModelId: 'llama3',
+  },
+};
+
+// 预定义模型列表
+export const PREDEFINED_MODELS: Record<string, ModelDefinitionConfig[]> = {
+  'openai': [
+    { id: 'gpt-4o', name: 'GPT-4o', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384 },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384 },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 4096 },
+    { id: 'chatgpt-4o-latest', name: 'ChatGPT-4o Latest', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384 },
+  ],
+  'anthropic': [
+    { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 4096 },
+  ],
+  'google': [
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', api: 'google-generative-ai', reasoning: true, input: ['text', 'image'], contextWindow: 1000000, maxTokens: 8192 },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', api: 'google-generative-ai', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', api: 'google-generative-ai', reasoning: false, input: ['text', 'image'], contextWindow: 1000000, maxTokens: 8192 },
+  ],
+  'moonshot': [
+    { id: 'kimi-k2.5', name: 'Kimi K2.5', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 256000, maxTokens: 8192 },
+    { id: 'moonshot-v1-128k', name: 'Moonshot V1 128K', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 16384 },
+  ],
+  'minimax': [
+    { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', api: 'anthropic-messages', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'MiniMax-M2.5-highspeed', name: 'MiniMax M2.5 Highspeed', api: 'anthropic-messages', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 8192 },
+  ],
+  'qianfan': [
+    { id: 'ernie-4.0-8k-latest', name: 'ERNIE 4.0 8K', api: 'openai-completions', reasoning: true, input: ['text'], contextWindow: 8000, maxTokens: 4096 },
+    { id: 'ernie-3.5-8k-latest', name: 'ERNIE 3.5 8K', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 8000, maxTokens: 4096 },
+  ],
+  'zhipuai': [
+    { id: 'glm-4', name: 'GLM-4', api: 'openai-completions', reasoning: true, input: ['text'], contextWindow: 128000, maxTokens: 4096 },
+    { id: 'glm-4-flash', name: 'GLM-4 Flash', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 4096 },
+  ],
+  'ollama': [
+    { id: 'llama3', name: 'Llama 3', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 8192, maxTokens: 4096 },
+    { id: 'llama3.1', name: 'Llama 3.1', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 4096 },
+    { id: 'codellama', name: 'Code Llama', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 16384, maxTokens: 4096 },
+    { id: 'qwen2.5', name: 'Qwen 2.5', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096 },
+    { id: 'mistral', name: 'Mistral', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 8192, maxTokens: 4096 },
+  ],
+};

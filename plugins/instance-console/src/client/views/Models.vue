@@ -3,41 +3,56 @@ import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 
-const route = useRoute();
 const router = useRouter();
 
-const instanceId = computed(() => route.params.id as string);
-const models = ref<any[]>([]);
+// 状态
 const loading = ref(true);
-const showAddForm = ref(false);
+const providers = ref<any[]>([]);
+const catalog = ref<any[]>([]);
+const showAddProviderForm = ref(false);
+const showAddModelForm = ref(false);
+const selectedProvider = ref<any>(null);
 
-const newModel = ref({
-  type: 'claude',
-  modelIdentifier: '',
+// 新增 Provider
+const newProvider = ref({
+  providerId: '',
+  name: '',
+  baseUrl: '',
   apiKey: '',
-  parameters: {
-    temperature: 0.7,
-    maxTokens: 4096,
-  },
+  api: '',
 });
 
-const modelTypes = [
-  { value: 'claude', label: 'Claude' },
-  { value: 'gpt', label: 'GPT' },
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'other', label: '其他' },
+// 新增模型
+const newModel = ref({
+  id: '',
+  name: '',
+  api: '',
+  reasoning: false,
+  contextWindow: 128000,
+  maxTokens: 4096,
+});
+
+// Provider 模板
+const providerTemplates = [
+  { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', api: 'openai-responses' },
+  { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com', api: 'anthropic-messages' },
+  { id: 'google', name: 'Google AI', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', api: 'google-generative-ai' },
+  { id: 'moonshot', name: 'Moonshot (Kimi)', baseUrl: 'https://api.moonshot.cn/v1', api: 'openai-completions' },
+  { id: 'minimax', name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/anthropic', api: 'anthropic-messages' },
+  { id: 'qianfan', name: '百度千帆', baseUrl: 'https://qianfan.baidubce.com/v2', api: 'openai-completions' },
+  { id: 'zhipuai', name: '智谱 AI', baseUrl: 'https://open.bigmodel.cn/api/cogagent/v2', api: 'openai-completions' },
+  { id: 'ollama', name: 'Ollama (本地)', baseUrl: 'http://localhost:11434/v1', api: 'openai-completions' },
 ];
 
 onMounted(async () => {
-  await fetchModels();
+  await Promise.all([fetchProviders(), fetchCatalog()]);
 });
 
-async function fetchModels(): Promise<void> {
-  loading.value = true;
+async function fetchProviders(): Promise<void> {
   try {
-    const response = await api.get(`/instances/${instanceId.value}/models`);
+    const response = await api.get('/models/providers');
     if (response.ok && response.data) {
-      models.value = (response.data as any).items || [];
+      providers.value = response.data;
     }
   } catch (e) {
     console.error(e);
@@ -46,24 +61,69 @@ async function fetchModels(): Promise<void> {
   }
 }
 
-async function handleAddModel(): Promise<void> {
+async function fetchCatalog(): Promise<void> {
   try {
-    const response = await api.post(`/instances/${instanceId.value}/models`, {
-      type: newModel.value.type,
-      modelIdentifier: newModel.value.modelIdentifier,
-      apiKey: newModel.value.apiKey || undefined,
-      parameters: newModel.value.parameters,
+    const response = await api.get('/models/catalog');
+    if (response.ok && response.data) {
+      catalog.value = response.data;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function selectTemplate(template: any): void {
+  newProvider.value.providerId = template.id;
+  newProvider.value.name = template.name;
+  newProvider.value.baseUrl = template.baseUrl;
+  newProvider.value.api = template.api;
+}
+
+async function handleAddProvider(): Promise<void> {
+  try {
+    const response = await api.post('/models/providers', {
+      providerId: newProvider.value.providerId,
+      baseUrl: newProvider.value.baseUrl,
+      apiKey: newProvider.value.apiKey || undefined,
+      api: newProvider.value.api,
+      models: [],
     });
 
     if (response.ok) {
-      await fetchModels();
-      showAddForm.value = false;
-      newModel.value = {
-        type: 'claude',
-        modelIdentifier: '',
-        apiKey: '',
-        parameters: { temperature: 0.7, maxTokens: 4096 },
-      };
+      await fetchProviders();
+      showAddProviderForm.value = false;
+      newProvider.value = { providerId: '', name: '', baseUrl: '', apiKey: '', api: '' };
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function handleDeleteProvider(providerId: string): Promise<void> {
+  if (!confirm('确定要删除这个 Provider 吗？')) return;
+
+  try {
+    await api.delete(`/models/providers/${providerId}`);
+    await fetchProviders();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function handleAddModel(): Promise<void> {
+  if (!selectedProvider.value) return;
+
+  try {
+    const response = await api.post(`/models/providers/${selectedProvider.value.id}/models`, newModel.value);
+
+    if (response.ok) {
+      // 刷新 provider 详情
+      const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+      if (detailRes.ok && detailRes.data) {
+        selectedProvider.value = detailRes.data;
+      }
+      showAddModelForm.value = false;
+      newModel.value = { id: '', name: '', api: '', reasoning: false, contextWindow: 128000, maxTokens: 4096 };
     }
   } catch (e) {
     console.error(e);
@@ -71,22 +131,40 @@ async function handleAddModel(): Promise<void> {
 }
 
 async function handleRemoveModel(modelId: string): Promise<void> {
+  if (!selectedProvider.value) return;
   if (!confirm('确定要移除这个模型吗？')) return;
 
   try {
-    await api.delete(`/instances/${instanceId.value}/models/${modelId}`);
-    await fetchModels();
+    await api.delete(`/models/providers/${selectedProvider.value.id}/models/${modelId}`);
+    // 刷新 provider 详情
+    const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+    if (detailRes.ok && detailRes.data) {
+      selectedProvider.value = detailRes.data;
+    }
   } catch (e) {
     console.error(e);
   }
 }
 
-function goBack(): void {
-  router.push(`/instances/${instanceId.value}`);
+function selectProvider(provider: any): void {
+  // 获取完整详情
+  api.get(`/models/providers/${provider.id}`).then(res => {
+    if (res.ok && res.data) {
+      selectedProvider.value = res.data;
+    }
+  });
 }
 
-function getTypeLabel(type: string): string {
-  return modelTypes.find((t) => t.value === type)?.label || type;
+function closeProviderDetail(): void {
+  selectedProvider.value = null;
+}
+
+function goBack(): void {
+  router.push('/');
+}
+
+function getProviderTemplate(providerId: string): any {
+  return providerTemplates.find(t => t.id === providerId);
 }
 </script>
 
@@ -96,118 +174,253 @@ function getTypeLabel(type: string): string {
       <button @click="goBack" class="text-slate-400 hover:text-text-light">
         ← 返回
       </button>
-      <h1 class="text-2xl font-bold">模型管理</h1>
+      <h1 class="text-2xl font-bold">模型配置</h1>
     </div>
 
-    <div class="card mb-6">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold">已加载的模型</h2>
-        <button @click="showAddForm = !showAddForm" class="btn btn-primary text-sm">
-          + 添加模型
-        </button>
-      </div>
+    <div class="loading-state" v-if="loading">
+      <div class="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full"></div>
+    </div>
 
-      <!-- 添加模型表单 -->
-      <div v-if="showAddForm" class="mb-6 p-4 bg-bg-dark rounded-lg">
-        <h3 class="font-semibold mb-4">添加新模型</h3>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">模型类型</label>
-            <select v-model="newModel.type" class="w-full">
-              <option v-for="t in modelTypes" :key="t.value" :value="t.value">
-                {{ t.label }}
-              </option>
-            </select>
-          </div>
+    <div v-else class="space-y-6">
+      <!-- Provider 列表 -->
+      <div class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">已配置的 Providers</h2>
+          <button @click="showAddProviderForm = !showAddProviderForm" class="btn btn-primary text-sm">
+            + 添加 Provider
+          </button>
+        </div>
 
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">模型标识符</label>
-            <input
-              v-model="newModel.modelIdentifier"
-              type="text"
-              class="w-full"
-              placeholder="如: claude-3-5-sonnet"
-            />
-          </div>
+        <!-- 添加 Provider 表单 -->
+        <div v-if="showAddProviderForm" class="mb-6 p-4 bg-bg-dark rounded-lg">
+          <h3 class="font-semibold mb-4">添加新 Provider</h3>
 
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">API Key</label>
-            <input
-              v-model="newModel.apiKey"
-              type="password"
-              class="w-full"
-              placeholder="可选"
-            />
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm text-slate-400 mb-2">Temperature</label>
-              <input
-                v-model.number="newModel.parameters.temperature"
-                type="number"
-                step="0.1"
-                min="0"
-                max="2"
-                class="w-full"
-              />
-            </div>
-            <div>
-              <label class="block text-sm text-slate-400 mb-2">Max Tokens</label>
-              <input
-                v-model.number="newModel.parameters.maxTokens"
-                type="number"
-                min="1"
-                class="w-full"
-              />
+          <!-- 快速模板选择 -->
+          <div class="mb-4">
+            <label class="block text-sm text-slate-400 mb-2">快速选择模板</label>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <button
+                v-for="tpl in providerTemplates"
+                :key="tpl.id"
+                @click="selectTemplate(tpl)"
+                class="p-2 text-sm bg-bg-secondary rounded hover:bg-primary/20 transition"
+                :class="{ 'bg-primary/30': newProvider.providerId === tpl.id }"
+              >
+                {{ tpl.name }}
+              </button>
             </div>
           </div>
 
-          <div class="flex gap-3">
-            <button @click="showAddForm = false" class="btn btn-secondary">
-              取消
-            </button>
-            <button @click="handleAddModel" class="btn btn-primary">
-              添加
-            </button>
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">Provider ID</label>
+                <input v-model="newProvider.providerId" type="text" class="w-full" placeholder="如: openai" />
+              </div>
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">名称</label>
+                <input v-model="newProvider.name" type="text" class="w-full" placeholder="如: OpenAI" />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm text-slate-400 mb-2">Base URL</label>
+              <input v-model="newProvider.baseUrl" type="text" class="w-full" placeholder="https://api.openai.com/v1" />
+            </div>
+
+            <div>
+              <label class="block text-sm text-slate-400 mb-2">API Key</label>
+              <input v-model="newProvider.apiKey" type="password" class="w-full" placeholder="sk-..." />
+            </div>
+
+            <div>
+              <label class="block text-sm text-slate-400 mb-2">API 类型</label>
+              <select v-model="newProvider.api" class="w-full">
+                <option value="openai-responses">OpenAI Responses</option>
+                <option value="openai-completions">OpenAI Completions</option>
+                <option value="anthropic-messages">Anthropic Messages</option>
+                <option value="google-generative-ai">Google Generative AI</option>
+              </select>
+            </div>
+
+            <div class="flex gap-3">
+              <button @click="showAddProviderForm = false" class="btn btn-secondary">取消</button>
+              <button @click="handleAddProvider" class="btn btn-primary">添加</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Provider 列表 -->
+        <div v-if="providers.length === 0" class="text-center py-8 text-slate-500">
+          暂无配置的 Providers
+        </div>
+
+        <div v-else class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="p in providers"
+            :key="p.id"
+            class="p-4 bg-bg-dark rounded-lg cursor-pointer hover:bg-bg-dark/80 transition"
+            @click="selectProvider(p)"
+          >
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="font-semibold">{{ p.id }}</span>
+                <span class="text-slate-400 text-sm ml-2">{{ getProviderTemplate(p.id)?.name || '' }}</span>
+              </div>
+              <button
+                @click.stop="handleDeleteProvider(p.id)"
+                class="text-slate-500 hover:text-red-400 p-1"
+              >
+                ✕
+              </button>
+            </div>
+            <div class="text-sm text-slate-400 mt-2">
+              <span>{{ p.modelCount }} 个模型</span>
+              <span v-if="p.hasApiKey" class="ml-2 text-green-400">✓ 已配置 Key</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <div v-if="loading" class="flex items-center justify-center py-8">
-        <div class="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full"></div>
-      </div>
-
-      <div v-else-if="models.length === 0" class="text-center py-8 text-slate-500">
-        暂无模型
-      </div>
-
-      <div v-else class="space-y-3">
-        <div
-          v-for="model in models"
-          :key="model.id"
-          class="flex items-center justify-between p-4 bg-bg-dark rounded-lg"
-        >
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="text-lg">🤖</span>
-              <span class="font-semibold">{{ getTypeLabel(model.type) }}</span>
-            </div>
-            <p class="text-sm text-slate-400 font-mono mt-1">
-              {{ model.modelIdentifier }}
-            </p>
-            <p v-if="model.parameters" class="text-xs text-slate-500 mt-1">
-              temperature: {{ model.parameters.temperature }} | maxTokens: {{ model.parameters.maxTokens }}
-            </p>
+      <!-- Provider 详情 -->
+      <div v-if="selectedProvider" class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">{{ selectedProvider.id }} - 模型列表</h2>
+          <div class="flex gap-2">
+            <button @click="showAddModelForm = !showAddModelForm" class="btn btn-primary text-sm">
+              + 添加模型
+            </button>
+            <button @click="closeProviderDetail" class="btn btn-secondary text-sm">关闭</button>
           </div>
-          <button
-            @click="handleRemoveModel(model.id)"
-            class="btn btn-danger text-sm"
+        </div>
+
+        <!-- 添加模型表单 -->
+        <div v-if="showAddModelForm" class="mb-6 p-4 bg-bg-dark rounded-lg">
+          <h3 class="font-semibold mb-4">添加新模型</h3>
+
+          <!-- 预定义模型选择 -->
+          <div class="mb-4" v-if="catalog.find(c => c.id === selectedProvider.id)">
+            <label class="block text-sm text-slate-400 mb-2">从目录选择</label>
+            <select
+              @change="(e: any) => {
+                const model = catalog.find(c => c.id === selectedProvider.id)?.models.find((m: any) => m.id === e.target.value);
+                if (model) newModel = { ...model };
+              }"
+              class="w-full"
+            >
+              <option value="">-- 选择预定义模型 --</option>
+              <option
+                v-for="m in catalog.find(c => c.id === selectedProvider.id)?.models"
+                :key="m.id"
+                :value="m.id"
+              >
+                {{ m.name }} ({{ m.id }})
+              </option>
+            </select>
+          </div>
+
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">模型 ID</label>
+                <input v-model="newModel.id" type="text" class="w-full" placeholder="如: gpt-4o" />
+              </div>
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">模型名称</label>
+                <input v-model="newModel.name" type="text" class="w-full" placeholder="如: GPT-4o" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">API</label>
+                <input v-model="newModel.api" type="text" class="w-full" />
+              </div>
+              <div class="flex items-center gap-2 pt-6">
+                <input v-model="newModel.reasoning" type="checkbox" id="reasoning" />
+                <label for="reasoning" class="text-sm">支持推理</label>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">上下文窗口</label>
+                <input v-model.number="newModel.contextWindow" type="number" class="w-full" />
+              </div>
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">最大 Tokens</label>
+                <input v-model.number="newModel.maxTokens" type="number" class="w-full" />
+              </div>
+            </div>
+
+            <div class="flex gap-3">
+              <button @click="showAddModelForm = false" class="btn btn-secondary">取消</button>
+              <button @click="handleAddModel" class="btn btn-primary">添加</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 模型列表 -->
+        <div v-if="selectedProvider.models?.length === 0" class="text-center py-8 text-slate-500">
+          暂无模型
+        </div>
+
+        <div v-else class="space-y-3">
+          <div
+            v-for="model in selectedProvider.models"
+            :key="model.id"
+            class="flex items-center justify-between p-4 bg-bg-dark rounded-lg"
           >
-            移除
-          </button>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="font-semibold">{{ model.name || model.id }}</span>
+                <span v-if="model.reasoning" class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">推理</span>
+              </div>
+              <p class="text-sm text-slate-400 font-mono mt-1">{{ model.id }}</p>
+              <p class="text-xs text-slate-500 mt-1">
+                上下文: {{ model.contextWindow?.toLocaleString() }} | 最大: {{ model.maxTokens?.toLocaleString() }}
+              </p>
+            </div>
+            <button @click="handleRemoveModel(model.id)" class="btn btn-danger text-sm">移除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 可用模型目录 -->
+      <div class="card">
+        <h2 class="text-lg font-semibold mb-4">可用模型目录</h2>
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="provider in catalog"
+            :key="provider.id"
+            class="p-4 bg-bg-dark rounded-lg"
+          >
+            <div class="font-semibold mb-2">{{ provider.name }}</div>
+            <div class="text-xs text-slate-400 mb-2">{{ provider.baseUrl }}</div>
+            <div class="text-xs text-slate-500">
+              {{ provider.models?.length || 0 }} 个预定义模型
+            </div>
+            <div class="mt-2 flex flex-wrap gap-1">
+              <span
+                v-for="m in (provider.models || []).slice(0, 3)"
+                :key="m.id"
+                class="text-xs px-2 py-0.5 bg-bg-secondary rounded"
+              >
+                {{ m.id }}
+              </span>
+              <span v-if="(provider.models?.length || 0) > 3" class="text-xs text-slate-500">
+                +{{ (provider.models?.length || 0) - 3 }} 更多
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.loading-state {
+  @apply flex items-center justify-center py-16;
+}
+</style>
