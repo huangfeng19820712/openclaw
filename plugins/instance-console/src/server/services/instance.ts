@@ -88,6 +88,23 @@ export class InstanceService {
   }
 
   /**
+   * 从容器名提取 instance ID
+   * 容器名格式: openclaw-{instance_id}-openclaw-gateway-1
+   * 例如: openclaw-gw1-openclaw-gateway-1 -> gw1
+   */
+  private extractInstanceIdFromContainerName(containerName: string): string {
+    // 如果有 openclaw.sessionKey 标签，使用它
+    // 否则从容器名提取
+    // 格式: openclaw-{instance_id}-openclaw-gateway-1
+    const match = containerName.match(/^openclaw-(.+)-openclaw-gateway-1$/);
+    if (match) {
+      return match[1];
+    }
+    // 如果格式不匹配，返回原名
+    return containerName;
+  }
+
+  /**
    * 根据 sessionKey 或容器名获取实例
    */
   async getInstanceBySessionKey(sessionKeyOrContainerName: string): Promise<Instance | null> {
@@ -184,7 +201,8 @@ export class InstanceService {
 
     // 调用 cleanup-instance.sh 删除实例（使用 --force 跳过确认）
     // 注意：cleanup-script 需要 instance_id (如 gw1)，不是完整的容器名
-    const instanceId = instance.sessionKey;
+    // 从容器名提取真正的 instance_id（容器名格式: openclaw-{instance_id}-openclaw-gateway-1）
+    const instanceId = this.extractInstanceIdFromContainerName(instance.containerName);
     const result = await this.execScript(this.cleanupScriptPath, ['--force', instanceId]);
 
     if (result.code !== 0) {
