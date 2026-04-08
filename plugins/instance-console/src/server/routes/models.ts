@@ -219,5 +219,20 @@ export function createModelsRouter(modelService: ModelService) {
     }
   });
 
+  /**
+   * POST /api/models/providers/:providerId/models/:modelId/test
+   * 测试单个模型是否可用
+   */
+  router.post('/providers/:providerId/models/:modelId/test', async (req: Request, res: Response) => {
+    try {
+      const { providerId, modelId } = req.params;
+      const result = await modelService.testModel(providerId, modelId);
+      res.json(result);
+    } catch (error) {
+      console.error('Test model error:', error);
+      res.status(500).json({ ok: false, error: '测试模型失败' });
+    }
+  });
+
   return router;
 }

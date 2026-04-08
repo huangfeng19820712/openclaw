@@ -34,6 +34,9 @@ const newModel = ref({
   maxTokens: 4096,
 });
 
+// 测试模型
+const testingModel = ref<string | null>(null);
+
 // Provider 模板
 const providerTemplates = [
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', api: 'openai-responses' },
@@ -188,6 +191,25 @@ async function handleRemoveModel(modelId: string): Promise<void> {
     }
   } catch (e) {
     console.error(e);
+  }
+}
+
+async function handleTestModel(modelId: string): Promise<void> {
+  if (!selectedProvider.value) return;
+  if (!confirm(`确定要测试 ${modelId} 吗？`)) return;
+
+  testingModel.value = modelId;
+  try {
+    const response = await api.post(`/models/providers/${selectedProvider.value.id}/models/${modelId}/test`);
+    if (response.success) {
+      alert(`✅ ${(response as any).message || '模型正常'}`);
+    } else {
+      alert(`❌ ${(response as any).message || '模型不可用'}`);
+    }
+  } catch (e) {
+    alert(`❌ 测试失败: ${e}`);
+  } finally {
+    testingModel.value = null;
   }
 }
 
@@ -443,7 +465,16 @@ function getProviderTemplate(providerId: string): any {
                 上下文: {{ model.contextWindow?.toLocaleString() }} | 最大: {{ model.maxTokens?.toLocaleString() }}
               </p>
             </div>
-            <button @click="handleRemoveModel(model.id)" class="btn btn-danger text-sm">移除</button>
+            <div class="flex gap-2">
+              <button
+                @click="handleTestModel(model.id)"
+                class="btn btn-secondary text-sm"
+                :disabled="testingModel === model.id"
+              >
+                {{ testingModel === model.id ? '测试中...' : '测试' }}
+              </button>
+              <button @click="handleRemoveModel(model.id)" class="btn btn-danger text-sm">移除</button>
+            </div>
           </div>
         </div>
       </div>

@@ -423,6 +423,97 @@ export class ModelService {
     };
     return defaults[providerId] || 'gpt-4o-mini';
   }
+
+  /**
+   * 测试单个模型是否可用
+   */
+  async testModel(providerId: string, modelId: string): Promise<{ success: boolean; message: string }> {
+    const provider = await this.getProvider(providerId);
+    if (!provider) {
+      return { success: false, message: 'Provider 不存在' };
+    }
+
+    const apiKey = await this.getDecryptedApiKey(providerId);
+    if (!apiKey) {
+      return { success: false, message: 'API Key 未配置' };
+    }
+
+    const model = provider.models.find(m => m.id === modelId);
+    if (!model) {
+      return { success: false, message: '模型不存在' };
+    }
+
+    const { api: apiType, baseUrl } = provider;
+    const testModelId = modelId;
+
+    try {
+      let testUrl = '';
+      let testBody: unknown = {};
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      };
+
+      switch (apiType) {
+        case 'openai-responses':
+        case 'openai-completions':
+          testUrl = `${baseUrl}/chat/completions`;
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 5,
+          };
+          break;
+
+        case 'anthropic-messages':
+          testUrl = `${baseUrl}/messages`;
+          headers['anthropic-version'] = '2023-06-01';
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 10,
+          };
+          break;
+
+        case 'google-generative-ai':
+          testUrl = `${baseUrl}/models?key=${apiKey}`;
+          headers = { 'Content-Type': 'application/json' };
+          delete headers['Authorization'];
+          // Google 需要单独测试
+          const response = await fetch(testUrl, { method: 'GET', headers });
+          if (response.ok) {
+            return { success: true, message: '模型可用' };
+          } else {
+            const errorData = await response.json().catch(() => ({}));
+            return { success: false, message: `模型不可用: ${JSON.stringify(errorData)}` };
+          }
+
+        default:
+          return { success: false, message: '不支持的 API 类型' };
+      }
+
+      const response = await fetch(testUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(testBody),
+      });
+
+      if (response.ok) {
+        const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+        let modelInfo = '';
+        if (data.model) {
+          modelInfo = `, 模型: ${String(data.model)}`;
+        }
+        return { success: true, message: `模型正常${modelInfo}` };
+      } else {
+        const errorData = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const errorMsg = (errorData.error as Record<string, unknown>)?.message || (errorData.error as Record<string, unknown>)?.code || response.statusText;
+        return { success: false, message: `模型不可用: ${errorMsg}` };
+      }
+    } catch (error) {
+      return { success: false, message: `测试错误: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
 }
 
 // 预定义的 provider 配置模板
