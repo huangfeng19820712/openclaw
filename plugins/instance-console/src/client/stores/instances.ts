@@ -93,8 +93,10 @@ export const useInstancesStore = defineStore('instances', () => {
         const response = await api.get(`/instances/tasks/${taskId}/result`);
         if (response.ok && response.data) {
           const data = response.data as any;
+          console.log('[pollCreateTask] response:', data);
           // 如果还在运行中，继续等待
           if (data.status === 'pending' || data.status === 'running') {
+            console.log(`[pollCreateTask] 任务进行中 (${i+1}/${maxAttempts}): ${data.progress}`);
             await new Promise(resolve => setTimeout(resolve, interval));
             continue;
           }
@@ -102,27 +104,39 @@ export const useInstancesStore = defineStore('instances', () => {
           if (data.status === 'failed') {
             throw new Error(data.error || '创建失败');
           }
-          // 完成
-          await fetchInstances();
+          // 完成 - 直接返回 data（它已经是 Instance 对象）
+          console.log('[pollCreateTask] 任务完成:', data);
           return data as Instance;
         }
+        // response.ok 为 false 或 response.data 为空
+        console.log(`[pollCreateTask] 轮询响应异常 (${i+1}/${maxAttempts}):`, response);
+        if (i === maxAttempts - 1) {
+          throw new Error(response.error || '创建实例失败');
+        }
       } catch (e) {
+        console.error(`[pollCreateTask] 轮询出错 (${i+1}/${maxAttempts}):`, e);
         if (i === maxAttempts - 1) throw e;
-        await new Promise(resolve => setTimeout(resolve, interval));
       }
+      await new Promise(resolve => setTimeout(resolve, interval));
     }
     return null;
   }
 
   async function createInstance(input: InstanceCreateInput): Promise<Instance | null> {
+    console.log('[createInstance] 开始创建实例:', input);
     try {
       const response = await api.post<{ taskId: string }>('/instances', input);
+      console.log('[createInstance] POST 响应:', response);
+
       if (response.ok && response.data?.taskId) {
         // 轮询任务状态直到完成
-        return await pollCreateTask(response.data.taskId);
+        const instance = await pollCreateTask(response.data.taskId);
+        console.log('[createInstance] 创建完成:', instance);
+        return instance;
       }
       throw new Error(response.error || '创建实例失败');
     } catch (e) {
+      console.error('[createInstance] 创建失败:', e);
       throw e;
     }
   }
