@@ -9,7 +9,9 @@ export class InstanceService {
   private containerService: ContainerService;
   private operationLogService: OperationLogService;
   private readonly setupScriptPath = '/data/workspace/openclaw/docker-instance-setup.sh';
+  private readonly deployWithInviteScriptPath = '/data/workspace/openclaw/deploy-instance-with-invite.sh';
   private readonly cleanupScriptPath = '/data/workspace/openclaw/cleanup-instance.sh';
+  private readonly serverIp = '192.168.90.6';  // TODO: 动态获取服务器 IP
 
   constructor(config: LoadedConfig, containerService: ContainerService, operationLogService: OperationLogService) {
     this.config = config;
@@ -149,35 +151,43 @@ export class InstanceService {
   }
 
   /**
-   * 创建新实例 - 调用 docker-instance-setup.sh 脚本
+   * 创建新实例 - 调用 deploy-instance-with-invite.sh 脚本（完整流程）
    */
   async createInstance(input: InstanceCreateInput): Promise<Instance> {
     const instanceId = input.sessionKey;
+    const containerName = `openclaw-${instanceId}-openclaw-gateway-1`;
 
-    // 调用 docker-instance-setup.sh 创建容器
-    const env: Record<string, string> = {
-      OPENCLAW_INSTANCE_ID: instanceId,
-      OPENCLAW_NO_ONBOARD: 'true',
-      OPENCLAW_SKIP_BUILD: 'true',
-      OPENCLAW_IMAGE: input.dockerImage || 'openclaw:local',
-    };
-
-    // 如果指定了端口偏移
-    if (input.portOffset !== undefined) {
-      env.OPENCLAW_PORT_OFFSET = String(input.portOffset);
-    }
-
-    const result = await this.execScript(this.setupScriptPath, [], env);
+    // 调用 deploy-instance-with-invite.sh（完整流程：创建容器、复制插件、重启、生成邀请码）
+    const result = await this.execScript(this.deployWithInviteScriptPath, [instanceId]);
 
     if (result.code !== 0) {
       await this.operationLogService.log('create', instanceId, 'instance', 'failed', result.stderr || result.stdout);
       throw new Error(`创建实例失败: ${result.stderr || result.stdout}`);
     }
 
-    // 从输出中提取信息
-    const now = new Date().toISOString();
-    const containerName = `openclaw-${instanceId}-openclaw-gateway-1`;
+    // 从输出中提取邀请码和访问 URL
+    let inviteCode = '';
+    let accessUrl = '';
+    let gatewayPort = 18789;
 
+    const codeMatch = result.stdout.match(/邀请码：\s*(\S+)/);
+    if (codeMatch) {
+      inviteCode = codeMatch[1];
+    }
+
+    const portMatch = result.stdout.match(/Gateway 端口：(\d+)/);
+    if (portMatch) {
+      gatewayPort = parseInt(portMatch[1], 10);
+    }
+
+    const urlMatch = result.stdout.match(/http:\/\/[^\s]+/);
+    if (urlMatch) {
+      accessUrl = urlMatch[0];
+    } else if (inviteCode) {
+      accessUrl = `http://${this.serverIp}:${gatewayPort}/?inviteCode=${inviteCode}&session=main`;
+    }
+
+    const now = new Date().toISOString();
     await this.operationLogService.log('create', instanceId, 'instance', 'success');
 
     return {
@@ -189,6 +199,10 @@ export class InstanceService {
       image: input.dockerImage || 'openclaw:local',
       createdAt: now,
       lastUsedAt: now,
+      inviteCode,
+      accessUrl,
+      serverIp: this.serverIp,
+      gatewayPort,
     };
   }
 

@@ -65,6 +65,12 @@ export interface Instance {
   createdAt: string;
   lastUsedAt: string;
   ports?: Record<string, string>;  // 容器端口映射，如 { "18789/tcp": "0.0.0.0:18889" }
+  // 邀请码信息（创建后返回）
+  inviteCode?: string;
+  inviteCodeName?: string;
+  accessUrl?: string;
+  serverIp?: string;
+  gatewayPort?: number;
 }
 
 export interface InstanceCreateInput {
