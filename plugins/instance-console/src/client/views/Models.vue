@@ -37,6 +37,16 @@ const newModel = ref({
 // 测试模型
 const testingModel = ref<string | null>(null);
 
+// 编辑 Provider
+const editingProvider = ref<any>(null);
+const showEditProviderForm = ref(false);
+const testingEditProvider = ref(false);
+const testEditProviderResult = ref<{ success: boolean; message: string } | null>(null);
+
+// 编辑模型
+const editingModel = ref<any>(null);
+const showEditModelForm = ref(false);
+
 // Provider 模板
 const providerTemplates = [
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', api: 'openai-responses' },
@@ -233,6 +243,122 @@ function goBack(): void {
 function getProviderTemplate(providerId: string): any {
   return providerTemplates.find(t => t.id === providerId);
 }
+
+// 打开编辑 Provider 表单
+function openEditProviderForm(provider: any): void {
+  editingProvider.value = {
+    providerId: provider.id,
+    baseUrl: provider.baseUrl || '',
+    apiKey: '',  // 不显示现有 API Key
+    api: provider.api || '',
+    originalProviderId: provider.id,  // 记录原始 ID
+  };
+  showEditProviderForm.value = true;
+  testEditProviderResult.value = null;
+}
+
+// 测试编辑后的 Provider 配置
+async function handleTestEditProvider(): Promise<void> {
+  if (!editingProvider.value.providerId || !editingProvider.value.baseUrl || !editingProvider.value.apiKey || !editingProvider.value.api) {
+    testEditProviderResult.value = { success: false, message: '请填写完整的配置信息' };
+    return;
+  }
+
+  testingEditProvider.value = true;
+  testEditProviderResult.value = null;
+  try {
+    const response = await api.post('/models/providers/test-config', {
+      providerId: editingProvider.value.providerId,
+      baseUrl: editingProvider.value.baseUrl,
+      apiKey: editingProvider.value.apiKey,
+      api: editingProvider.value.api,
+    });
+    testEditProviderResult.value = response as { success: boolean; message: string };
+  } catch (e) {
+    testEditProviderResult.value = { success: false, message: `测试失败: ${e}` };
+  } finally {
+    testingEditProvider.value = false;
+  }
+}
+
+// 保存编辑的 Provider
+async function handleUpdateProvider(): Promise<void> {
+  try {
+    const response = await api.post('/models/providers', {
+      providerId: editingProvider.value.providerId,
+      baseUrl: editingProvider.value.baseUrl,
+      apiKey: editingProvider.value.apiKey || undefined,
+      api: editingProvider.value.api,
+      models: selectedProvider.value?.models || [],
+    });
+
+    if (response.ok) {
+      await fetchProviders();
+      // 如果改了 ID，刷新详情
+      if (editingProvider.value.providerId !== editingProvider.value.originalProviderId) {
+        selectProvider({ id: editingProvider.value.providerId });
+      } else if (selectedProvider.value) {
+        const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+        if (detailRes.ok && detailRes.data) {
+          selectedProvider.value = detailRes.data;
+        }
+      }
+      showEditProviderForm.value = false;
+      testEditProviderResult.value = null;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// 打开编辑模型表单
+function openEditModelForm(model: any): void {
+  editingModel.value = { ...model, originalId: model.id };
+  showEditModelForm.value = true;
+}
+
+// 保存编辑的模型
+async function handleUpdateModel(): Promise<void> {
+  if (!selectedProvider.value || !editingModel.value) return;
+
+  try {
+    // 删除旧模型（如果 ID 改变了）
+    if (editingModel.value.id !== editingModel.value.originalId) {
+      await api.delete(`/models/providers/${selectedProvider.value.id}/models/${editingModel.value.originalId}`);
+    }
+
+    // 添加/更新模型
+    const response = await api.post(`/models/providers/${selectedProvider.value.id}/models`, editingModel.value);
+
+    if (response.ok) {
+      // 刷新 provider 详情
+      const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+      if (detailRes.ok && detailRes.data) {
+        selectedProvider.value = detailRes.data;
+      }
+      showEditModelForm.value = false;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// 删除模型（带 ID 变更检测）
+async function handleRemoveModel(modelId: string, originalId?: string): Promise<void> {
+  if (!selectedProvider.value) return;
+  if (!confirm('确定要移除这个模型吗？')) return;
+
+  try {
+    await api.delete(`/models/providers/${selectedProvider.value.id}/models/${modelId}`);
+    // 刷新 provider 详情
+    const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+    if (detailRes.ok && detailRes.data) {
+      selectedProvider.value = detailRes.data;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
 </script>
 
 <template>
@@ -351,6 +477,13 @@ function getProviderTemplate(providerId: string): any {
                   ✓
                 </button>
                 <button
+                  @click.stop="openEditProviderForm(p)"
+                  class="text-slate-500 hover:text-blue-400 p-1"
+                  title="编辑"
+                >
+                  ✎
+                </button>
+                <button
                   @click.stop="handleDeleteProvider(p.id)"
                   class="text-slate-500 hover:text-red-400 p-1"
                 >
@@ -371,10 +504,59 @@ function getProviderTemplate(providerId: string): any {
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold">{{ selectedProvider.id }} - 模型列表</h2>
           <div class="flex gap-2">
+            <button @click="openEditProviderForm(selectedProvider)" class="btn btn-secondary text-sm">
+              编辑 Provider
+            </button>
             <button @click="showAddModelForm = !showAddModelForm" class="btn btn-primary text-sm">
               + 添加模型
             </button>
             <button @click="closeProviderDetail" class="btn btn-secondary text-sm">关闭</button>
+          </div>
+        </div>
+
+        <!-- 编辑 Provider 表单 -->
+        <div v-if="showEditProviderForm" class="mb-6 p-4 bg-bg-dark rounded-lg">
+          <h3 class="font-semibold mb-4">编辑 Provider</h3>
+
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">Provider ID</label>
+                <input v-model="editingProvider.providerId" type="text" class="w-full" />
+              </div>
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">Base URL</label>
+                <input v-model="editingProvider.baseUrl" type="text" class="w-full" />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm text-slate-400 mb-2">API Key (不修改请留空)</label>
+              <input v-model="editingProvider.apiKey" type="password" class="w-full" placeholder="留空则保持原 API Key" />
+            </div>
+
+            <div>
+              <label class="block text-sm text-slate-400 mb-2">API 类型</label>
+              <select v-model="editingProvider.api" class="w-full">
+                <option value="openai-responses">OpenAI Responses</option>
+                <option value="openai-completions">OpenAI Completions</option>
+                <option value="anthropic-messages">Anthropic Messages</option>
+                <option value="google-generative-ai">Google Generative AI</option>
+              </select>
+            </div>
+
+            <!-- 测试结果 -->
+            <div v-if="testEditProviderResult" class="p-3 rounded" :class="testEditProviderResult.success ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'">
+              {{ testEditProviderResult.message }}
+            </div>
+
+            <div class="flex gap-3">
+              <button @click="showEditProviderForm = false" class="btn btn-secondary">取消</button>
+              <button @click="handleTestEditProvider" class="btn btn-secondary" :disabled="testingEditProvider">
+                {{ testingEditProvider ? '测试中...' : '测试连接' }}
+              </button>
+              <button @click="handleUpdateProvider" class="btn btn-primary">保存</button>
+            </div>
           </div>
         </div>
 
@@ -473,7 +655,53 @@ function getProviderTemplate(providerId: string): any {
               >
                 {{ testingModel === model.id ? '测试中...' : '测试' }}
               </button>
+              <button @click="openEditModelForm(model)" class="btn btn-secondary text-sm">编辑</button>
               <button @click="handleRemoveModel(model.id)" class="btn btn-danger text-sm">移除</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 编辑模型表单 -->
+        <div v-if="showEditModelForm && editingModel" class="mb-6 p-4 bg-bg-dark rounded-lg">
+          <h3 class="font-semibold mb-4">编辑模型</h3>
+
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">模型 ID</label>
+                <input v-model="editingModel.id" type="text" class="w-full" />
+              </div>
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">模型名称</label>
+                <input v-model="editingModel.name" type="text" class="w-full" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">API</label>
+                <input v-model="editingModel.api" type="text" class="w-full" />
+              </div>
+              <div class="flex items-center gap-2 pt-6">
+                <input v-model="editingModel.reasoning" type="checkbox" id="editReasoning" />
+                <label for="editReasoning" class="text-sm">支持推理</label>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">上下文窗口</label>
+                <input v-model.number="editingModel.contextWindow" type="number" class="w-full" />
+              </div>
+              <div>
+                <label class="block text-sm text-slate-400 mb-2">最大 Tokens</label>
+                <input v-model.number="editingModel.maxTokens" type="number" class="w-full" />
+              </div>
+            </div>
+
+            <div class="flex gap-3">
+              <button @click="showEditModelForm = false" class="btn btn-secondary">取消</button>
+              <button @click="handleUpdateModel" class="btn btn-primary">保存</button>
             </div>
           </div>
         </div>
