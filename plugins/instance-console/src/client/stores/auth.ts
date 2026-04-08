@@ -41,6 +41,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function fetchCurrentUser(): Promise<void> {
+    // 如果没有 token，直接标记为已检查
     if (!token.value) {
       authChecked.value = true;
       return;
