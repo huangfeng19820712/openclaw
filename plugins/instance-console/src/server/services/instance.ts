@@ -8,7 +8,8 @@ export class InstanceService {
   private config: LoadedConfig;
   private containerService: ContainerService;
   private operationLogService: OperationLogService;
-  private readonly scriptPath = '/data/workspace/openclaw/docker-instance-setup.sh';
+  private readonly setupScriptPath = '/data/workspace/openclaw/docker-instance-setup.sh';
+  private readonly cleanupScriptPath = '/data/workspace/openclaw/cleanup-instance.sh';
 
   constructor(config: LoadedConfig, containerService: ContainerService, operationLogService: OperationLogService) {
     this.config = config;
@@ -18,15 +19,17 @@ export class InstanceService {
 
   /**
    * 执行 Shell 脚本
+   * @param scriptPath 脚本路径
    * @param scriptArgs 脚本参数
    * @param env 环境变量
    */
   private async execScript(
+    scriptPath: string,
     scriptArgs: string[] = [],
     env: Record<string, string> = {}
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve) => {
-      const proc = spawn('bash', [this.scriptPath, ...scriptArgs], {
+      const proc = spawn('bash', [scriptPath, ...scriptArgs], {
         env: { ...process.env, ...env },
         shell: false,
         windowsHide: true,
@@ -138,7 +141,7 @@ export class InstanceService {
       env.OPENCLAW_PORT_OFFSET = String(input.portOffset);
     }
 
-    const result = await this.execScript([], env);
+    const result = await this.execScript(this.setupScriptPath, [], env);
 
     if (result.code !== 0) {
       await this.operationLogService.log('create', instanceId, 'instance', 'failed', result.stderr || result.stdout);
@@ -180,7 +183,7 @@ export class InstanceService {
     }
 
     // 调用 cleanup-instance.sh 删除实例（使用 --force 跳过确认）
-    const result = await this.execScript(['--force', sessionKey]);
+    const result = await this.execScript(this.cleanupScriptPath, ['--force', sessionKey]);
 
     if (result.code !== 0) {
       await this.operationLogService.log('delete', sessionKey, 'instance', 'failed', result.stderr || result.stdout);
