@@ -72,7 +72,7 @@ export class InstanceService {
 
       return {
         id: container.name,
-        sessionKey: container.labels['openclaw.sessionKey'] || container.name,
+        sessionKey: container.labels['openclaw.sessionKey'] || this.extractInstanceIdFromContainerName(container.name),
         containerName: container.name,
         status: status as Instance['status'],
         image: container.image,
@@ -109,10 +109,15 @@ export class InstanceService {
    */
   async getInstanceBySessionKey(sessionKeyOrContainerName: string): Promise<Instance | null> {
     const containers = await this.containerService.listSandboxContainers();
-    // 直接用传入的值当作容器名查找（因为容器名和sessionKey都是直接可用的）
+
+    // 查找匹配的容器：支持三种方式
+    // 1. 完整容器名 (openclaw-pro1-openclaw-gateway-1)
+    // 2. openclaw.sessionKey 标签 (pro1)
+    // 3. 从容器名提取的 instance ID (pro1)
     const container = containers.find(c =>
       c.name === sessionKeyOrContainerName ||
-      c.labels['openclaw.sessionKey'] === sessionKeyOrContainerName
+      c.labels['openclaw.sessionKey'] === sessionKeyOrContainerName ||
+      this.extractInstanceIdFromContainerName(c.name) === sessionKeyOrContainerName
     );
 
     if (!container) {
@@ -125,9 +130,13 @@ export class InstanceService {
     // 获取端口映射
     const ports = await this.containerService.getContainerPorts(container.name);
 
+    // 优先使用标签中的 sessionKey，其次从容器名提取，最后使用完整容器名
+    const sessionKey = container.labels['openclaw.sessionKey'] ||
+                       this.extractInstanceIdFromContainerName(container.name);
+
     return {
       id: container.name,
-      sessionKey: container.labels['openclaw.sessionKey'] || container.name,
+      sessionKey,
       containerName: container.name,
       status: status as Instance['status'],
       image: container.image,
