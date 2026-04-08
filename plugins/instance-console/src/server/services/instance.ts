@@ -183,14 +183,16 @@ export class InstanceService {
     }
 
     // 调用 cleanup-instance.sh 删除实例（使用 --force 跳过确认）
-    const result = await this.execScript(this.cleanupScriptPath, ['--force', sessionKey]);
+    // 注意：cleanup-script 需要 instance_id (如 gw1)，不是完整的容器名
+    const instanceId = instance.sessionKey;
+    const result = await this.execScript(this.cleanupScriptPath, ['--force', instanceId]);
 
     if (result.code !== 0) {
-      await this.operationLogService.log('delete', sessionKey, 'instance', 'failed', result.stderr || result.stdout);
+      await this.operationLogService.log('delete', instanceId, 'instance', 'failed', result.stderr || result.stdout);
       throw new Error(`删除实例失败: ${result.stderr || result.stdout}`);
     }
 
-    await this.operationLogService.log('delete', sessionKey, 'instance', 'success');
+    await this.operationLogService.log('delete', instanceId, 'instance', 'success');
     return true;
   }
 
