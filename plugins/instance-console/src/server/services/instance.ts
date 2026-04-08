@@ -73,6 +73,38 @@ export class InstanceService {
   }
 
   /**
+   * 执行 Docker 命令
+   */
+  private async execDocker(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      const proc = spawn('docker', args, {
+        shell: false,
+        windowsHide: true,
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout?.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (code) => {
+        resolve({ code: code || 0, stdout, stderr });
+      });
+
+      proc.on('error', (err) => {
+        stderr += err.message;
+        resolve({ code: 1, stdout, stderr });
+      });
+    });
+  }
+
+  /**
    * 获取所有实例
    */
   async getInstances(): Promise<Instance[]> {
