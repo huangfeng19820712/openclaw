@@ -3,7 +3,11 @@ import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 
+const route = useRoute();
 const router = useRouter();
+
+// 从路由获取 instanceId
+const instanceId = computed(() => route.params.id as string);
 
 // 状态
 const loading = ref(true);
@@ -65,7 +69,7 @@ onMounted(async () => {
 
 async function fetchProviders(): Promise<void> {
   try {
-    const response = await api.get('/models/providers');
+    const response = await api.get(`/instances/${instanceId.value}/models/providers`);
     if (response.ok && response.data) {
       providers.value = response.data;
     }
@@ -78,7 +82,7 @@ async function fetchProviders(): Promise<void> {
 
 async function fetchCatalog(): Promise<void> {
   try {
-    const response = await api.get('/models/catalog');
+    const response = await api.get(`/instances/${instanceId.value}/models/catalog`);
     if (response.ok && response.data) {
       catalog.value = response.data;
     }
@@ -96,7 +100,7 @@ function selectTemplate(template: any): void {
 
 async function handleAddProvider(): Promise<void> {
   try {
-    const response = await api.post('/models/providers', {
+    const response = await api.post(`/instances/${instanceId.value}/models/providers`, {
       providerId: newProvider.value.providerId,
       baseUrl: newProvider.value.baseUrl,
       apiKey: newProvider.value.apiKey || undefined,
@@ -124,7 +128,7 @@ async function handleTestConfig(): Promise<void> {
   testingConfig.value = true;
   testConfigResult.value = null;
   try {
-    const response = await api.post('/models/providers/test-config', {
+    const response = await api.post(`/instances/${instanceId.value}/models/providers/test-config`, {
       providerId: newProvider.value.providerId,
       baseUrl: newProvider.value.baseUrl,
       apiKey: newProvider.value.apiKey,
@@ -143,7 +147,7 @@ async function handleDeleteProvider(providerId: string): Promise<void> {
   if (!confirm('确定要删除这个 Provider 吗？')) return;
 
   try {
-    await api.delete(`/models/providers/${providerId}`);
+    await api.delete(`/instances/${instanceId.value}/models/providers/${providerId}`);
     await fetchProviders();
   } catch (e) {
     console.error(e);
@@ -154,7 +158,7 @@ async function handleTestProvider(provider: any): Promise<void> {
   if (!confirm(`确定要测试 ${provider.id} 的连接吗？`)) return;
 
   try {
-    const response = await api.post(`/models/providers/${provider.id}/test`);
+    const response = await api.post(`/instances/${instanceId.value}/models/providers/${provider.id}/test`);
     if (response.ok) {
       alert(`✅ ${(response as any).message || '连接成功'}`);
     } else {
@@ -172,11 +176,11 @@ async function handleAddModel(): Promise<void> {
   }
 
   try {
-    const response = await api.post(`/models/providers/${selectedProvider.value.id}/models`, newModel.value);
+    const response = await api.post(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}/models`, newModel.value);
 
     if (response.ok) {
       // 刷新 provider 详情
-      const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+      const detailRes = await api.get(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}`);
       if (detailRes.ok && detailRes.data) {
         selectedProvider.value = detailRes.data;
       }
@@ -194,7 +198,7 @@ async function handleTestModel(modelId: string): Promise<void> {
 
   testingModel.value = modelId;
   try {
-    const response = await api.post(`/models/providers/${selectedProvider.value.id}/models/${modelId}/test`);
+    const response = await api.post(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}/models/${modelId}/test`);
     if (response.success) {
       alert(`✅ ${(response as any).message || '模型正常'}`);
     } else {
@@ -209,7 +213,7 @@ async function handleTestModel(modelId: string): Promise<void> {
 
 function selectProvider(provider: any): void {
   // 获取完整详情
-  api.get(`/models/providers/${provider.id}`).then(res => {
+  api.get(`/instances/${instanceId.value}/models/providers/${provider.id}`).then(res => {
     if (res.ok && res.data) {
       selectedProvider.value = res.data;
     }
@@ -251,7 +255,7 @@ async function handleTestEditProvider(): Promise<void> {
   testingEditProvider.value = true;
   testEditProviderResult.value = null;
   try {
-    const response = await api.post('/models/providers/test-config', {
+    const response = await api.post(`/instances/${instanceId.value}/models/providers/test-config`, {
       providerId: editingProvider.value.providerId,
       baseUrl: editingProvider.value.baseUrl,
       apiKey: editingProvider.value.apiKey,
@@ -268,7 +272,7 @@ async function handleTestEditProvider(): Promise<void> {
 // 保存编辑的 Provider
 async function handleUpdateProvider(): Promise<void> {
   try {
-    const response = await api.post('/models/providers', {
+    const response = await api.post(`/instances/${instanceId.value}/models/providers`, {
       providerId: editingProvider.value.providerId,
       baseUrl: editingProvider.value.baseUrl,
       apiKey: editingProvider.value.apiKey || undefined,
@@ -282,7 +286,7 @@ async function handleUpdateProvider(): Promise<void> {
       if (editingProvider.value.providerId !== editingProvider.value.originalProviderId) {
         selectProvider({ id: editingProvider.value.providerId });
       } else if (selectedProvider.value) {
-        const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+        const detailRes = await api.get(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}`);
         if (detailRes.ok && detailRes.data) {
           selectedProvider.value = detailRes.data;
         }
@@ -308,15 +312,15 @@ async function handleUpdateModel(): Promise<void> {
   try {
     // 删除旧模型（如果 ID 改变了）
     if (editingModel.value.id !== editingModel.value.originalId) {
-      await api.delete(`/models/providers/${selectedProvider.value.id}/models/${editingModel.value.originalId}`);
+      await api.delete(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}/models/${editingModel.value.originalId}`);
     }
 
     // 添加/更新模型
-    const response = await api.post(`/models/providers/${selectedProvider.value.id}/models`, editingModel.value);
+    const response = await api.post(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}/models`, editingModel.value);
 
     if (response.ok) {
       // 刷新 provider 详情
-      const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+      const detailRes = await api.get(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}`);
       if (detailRes.ok && detailRes.data) {
         selectedProvider.value = detailRes.data;
       }
@@ -333,9 +337,9 @@ async function handleRemoveModel(modelId: string, originalId?: string): Promise<
   if (!confirm('确定要移除这个模型吗？')) return;
 
   try {
-    await api.delete(`/models/providers/${selectedProvider.value.id}/models/${modelId}`);
+    await api.delete(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}/models/${modelId}`);
     // 刷新 provider 详情
-    const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
+    const detailRes = await api.get(`/instances/${instanceId.value}/models/providers/${selectedProvider.value.id}`);
     if (detailRes.ok && detailRes.data) {
       selectedProvider.value = detailRes.data;
     }

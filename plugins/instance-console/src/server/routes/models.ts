@@ -7,7 +7,7 @@ export function createModelsRouter(modelService: ModelService) {
   const router = Router();
 
   /**
-   * GET /api/models/catalog
+   * GET /api/instances/:instanceId/models/catalog
    * 获取可用的模型目录
    */
   router.get('/catalog', async (req: Request, res: Response) => {
@@ -32,12 +32,13 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * GET /api/models/providers
+   * GET /api/instances/:instanceId/models/providers
    * 获取已配置的 providers
    */
   router.get('/providers', async (req: Request, res: Response) => {
     try {
-      const providers = await modelService.getConfiguredProviders();
+      const { instanceId } = req.params;
+      const providers = await modelService.getConfiguredProviders(instanceId);
       res.json({
         ok: true,
         data: providers,
@@ -49,13 +50,13 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * GET /api/models/providers/:providerId
+   * GET /api/instances/:instanceId/models/providers/:providerId
    * 获取 provider 详情
    */
   router.get('/providers/:providerId', async (req: Request, res: Response) => {
     try {
-      const { providerId } = req.params;
-      const provider = await modelService.getProvider(providerId);
+      const { instanceId, providerId } = req.params;
+      const provider = await modelService.getProvider(instanceId, providerId);
 
       if (!provider) {
         res.status(404).json({ ok: false, error: 'Provider 不存在' });
@@ -63,7 +64,7 @@ export function createModelsRouter(modelService: ModelService) {
       }
 
       // 获取解密后的 API Key
-      const apiKey = await modelService.getDecryptedApiKey(providerId);
+      const apiKey = await modelService.getDecryptedApiKey(instanceId, providerId);
 
       res.json({
         ok: true,
@@ -80,11 +81,12 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * POST /api/models/providers
+   * POST /api/instances/:instanceId/models/providers
    * 添加或更新 provider
    */
   router.post('/providers', async (req: Request, res: Response) => {
     try {
+      const { instanceId } = req.params;
       const { providerId, baseUrl, apiKey, api, models } = req.body;
 
       if (!providerId || !baseUrl) {
@@ -92,7 +94,7 @@ export function createModelsRouter(modelService: ModelService) {
         return;
       }
 
-      const provider = await modelService.saveProvider(providerId, {
+      const provider = await modelService.saveProvider(instanceId, providerId, {
         baseUrl,
         apiKey,
         api,
@@ -107,7 +109,7 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * POST /api/models/providers/test-config
+   * POST /api/instances/:instanceId/models/providers/test-config
    * 测试 Provider 配置（不保存）
    */
   router.post('/providers/test-config', async (req: Request, res: Response) => {
@@ -135,13 +137,13 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * POST /api/models/providers/:providerId/test
+   * POST /api/instances/:instanceId/models/providers/:providerId/test
    * 测试已保存的 Provider 连接
    */
   router.post('/providers/:providerId/test', async (req: Request, res: Response) => {
     try {
-      const { providerId } = req.params;
-      const result = await modelService.testProviderConnection(providerId);
+      const { instanceId, providerId } = req.params;
+      const result = await modelService.testProviderConnection(instanceId, providerId);
       res.json(result);
     } catch (error) {
       console.error('Test provider connection error:', error);
@@ -150,13 +152,13 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * DELETE /api/models/providers/:providerId
+   * DELETE /api/instances/:instanceId/models/providers/:providerId
    * 删除 provider
    */
   router.delete('/providers/:providerId', async (req: Request, res: Response) => {
     try {
-      const { providerId } = req.params;
-      const deleted = await modelService.deleteProvider(providerId);
+      const { instanceId, providerId } = req.params;
+      const deleted = await modelService.deleteProvider(instanceId, providerId);
 
       if (!deleted) {
         res.status(404).json({ ok: false, error: 'Provider 不存在' });
@@ -171,12 +173,12 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * POST /api/models/providers/:providerId/models
+   * POST /api/instances/:instanceId/models/providers/:providerId/models
    * 添加模型到 provider
    */
   router.post('/providers/:providerId/models', async (req: Request, res: Response) => {
     try {
-      const { providerId } = req.params;
+      const { instanceId, providerId } = req.params;
       const model: ModelDefinitionConfig = req.body;
 
       if (!model.id) {
@@ -184,7 +186,7 @@ export function createModelsRouter(modelService: ModelService) {
         return;
       }
 
-      const success = await modelService.addModelToProvider(providerId, model);
+      const success = await modelService.addModelToProvider(instanceId, providerId, model);
 
       if (!success) {
         res.status(404).json({ ok: false, error: 'Provider 不存在' });
@@ -199,13 +201,13 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * DELETE /api/models/providers/:providerId/models/:modelId
+   * DELETE /api/instances/:instanceId/models/providers/:providerId/models/:modelId
    * 从 provider 移除模型
    */
   router.delete('/providers/:providerId/models/:modelId', async (req: Request, res: Response) => {
     try {
-      const { providerId, modelId } = req.params;
-      const deleted = await modelService.removeModelFromProvider(providerId, modelId);
+      const { instanceId, providerId, modelId } = req.params;
+      const deleted = await modelService.removeModelFromProvider(instanceId, providerId, modelId);
 
       if (!deleted) {
         res.status(404).json({ ok: false, error: 'Provider 或模型不存在' });
@@ -220,13 +222,13 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
-   * POST /api/models/providers/:providerId/models/:modelId/test
+   * POST /api/instances/:instanceId/models/providers/:providerId/models/:modelId/test
    * 测试单个模型是否可用
    */
   router.post('/providers/:providerId/models/:modelId/test', async (req: Request, res: Response) => {
     try {
-      const { providerId, modelId } = req.params;
-      const result = await modelService.testModel(providerId, modelId);
+      const { instanceId, providerId, modelId } = req.params;
+      const result = await modelService.testModel(instanceId, providerId, modelId);
       res.json(result);
     } catch (error) {
       console.error('Test model error:', error);

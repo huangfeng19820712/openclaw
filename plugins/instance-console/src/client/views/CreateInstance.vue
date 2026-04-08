@@ -145,6 +145,16 @@ function goToInstance(): void {
             <label class="block text-sm text-slate-400 mb-1">邀请码</label>
             <p class="font-mono text-lg text-primary">{{ createdInstance.inviteCode }}</p>
           </div>
+
+          <div v-if="createdInstance.gatewayToken">
+            <label class="block text-sm text-slate-400 mb-1">Gateway Token</label>
+            <div class="p-3 bg-bg-dark rounded font-mono text-sm break-all text-yellow-400">
+              {{ createdInstance.gatewayToken }}
+            </div>
+            <p class="text-xs text-slate-500 mt-1">
+              使用此 Token 访问 Gateway API
+            </p>
+          </div>
         </div>
       </div>
 

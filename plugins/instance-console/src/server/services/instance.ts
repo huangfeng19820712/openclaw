@@ -245,10 +245,11 @@ export class InstanceService {
 
       task.progress = '正在提取邀请码...';
 
-      // 从输出中提取邀请码和访问 URL
+      // 从输出中提取邀请码、Token 和访问 URL
       let inviteCode = '';
       let accessUrl = '';
       let gatewayPort = 18789;
+      let gatewayToken = '';
 
       const codeMatch = result.stdout.match(/邀请码：\s*(\S+)/);
       if (codeMatch) {
@@ -258,6 +259,12 @@ export class InstanceService {
       const portMatch = result.stdout.match(/Gateway 端口：(\d+)/);
       if (portMatch) {
         gatewayPort = parseInt(portMatch[1], 10);
+      }
+
+      // 解析 Gateway Token
+      const tokenMatch = result.stdout.match(/Gateway Token:\s*(\S+)/i);
+      if (tokenMatch) {
+        gatewayToken = tokenMatch[1];
       }
 
       const urlMatch = result.stdout.match(/http:\/\/[^\s]+/);
@@ -283,6 +290,7 @@ export class InstanceService {
         accessUrl,
         serverIp: this.serverIp,
         gatewayPort,
+        gatewayToken,
       };
 
       await this.operationLogService.log('create', instanceId, 'instance', 'success');

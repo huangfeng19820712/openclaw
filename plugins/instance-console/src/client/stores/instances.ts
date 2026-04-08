@@ -18,6 +18,8 @@ export interface Instance {
   accessUrl?: string;
   serverIp?: string;
   gatewayPort?: number;
+  // Gateway Token（创建后返回）
+  gatewayToken?: string;
 }
 
 export interface InstanceCreateInput {

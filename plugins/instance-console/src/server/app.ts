@@ -215,9 +215,9 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
   const instancesRouter = createInstancesRouter(services.instanceService);
   app.use('/api/instances', jwtAuthMiddleware, instancesRouter);
 
-  // 模型路由
+  // 模型路由 (每个实例独立的 providers/models)
   const modelsRouter = createModelsRouter(services.modelService);
-  app.use('/api/models', jwtAuthMiddleware, modelsRouter);
+  app.use('/api/instances/:instanceId/models', jwtAuthMiddleware, modelsRouter);
 
   // 渠道路由
   const channelsRouter = createChannelsRouter(services.channelService);

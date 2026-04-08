@@ -65,11 +65,19 @@ interface OpenClawConfigRoot {
 
 export class ModelService {
   private config: LoadedConfig;
-  private configPath: string;
+
+  // 多实例部署配置目录
+  private readonly instanceBasePath = '/data/openclaw/openclaw_instances';
 
   constructor(config: LoadedConfig) {
     this.config = config;
-    this.configPath = path.join(expandHomePath(config.openclaw.configDir), 'openclaw.json');
+  }
+
+  /**
+   * 获取指定实例的配置路径
+   */
+  private getInstanceConfigPath(instanceId: string): string {
+    return path.join(this.instanceBasePath, instanceId, 'openclaw.json');
   }
 
   /**
@@ -82,8 +90,9 @@ export class ModelService {
   /**
    * 读取 openclaw.json 配置
    */
-  private async readOpenClawConfig(): Promise<OpenClawConfigRoot> {
-    const content = await readFileIfExists(this.configPath);
+  private async readOpenClawConfig(instanceId: string): Promise<OpenClawConfigRoot> {
+    const configPath = this.getInstanceConfigPath(instanceId);
+    const content = await readFileIfExists(configPath);
     if (!content) {
       return {};
     }
@@ -97,18 +106,19 @@ export class ModelService {
   /**
    * 写入 openclaw.json 配置
    */
-  private async writeOpenClawConfig(config: OpenClawConfigRoot): Promise<void> {
-    const dir = path.dirname(this.configPath);
+  private async writeOpenClawConfig(instanceId: string, config: OpenClawConfigRoot): Promise<void> {
+    const configPath = this.getInstanceConfigPath(instanceId);
+    const dir = path.dirname(configPath);
     const { ensureDir } = await import('../../shared/utils.js');
     await ensureDir(dir);
-    await writeFile(this.configPath, JSON.stringify(config, null, 2), 'utf-8');
+    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
   }
 
   /**
    * 获取所有已配置的 providers
    */
-  async getConfiguredProviders(): Promise<Array<{ id: string; baseUrl: string; modelCount: number; hasApiKey: boolean }>> {
-    const config = await this.readOpenClawConfig();
+  async getConfiguredProviders(instanceId: string): Promise<Array<{ id: string; baseUrl: string; modelCount: number; hasApiKey: boolean }>> {
+    const config = await this.readOpenClawConfig(instanceId);
     const models = config.models as OpenClawModelsConfig | undefined;
 
     if (!models?.providers) {
@@ -126,8 +136,8 @@ export class ModelService {
   /**
    * 获取 provider 的详细信息
    */
-  async getProvider(providerId: string): Promise<ProviderConfig | null> {
-    const config = await this.readOpenClawConfig();
+  async getProvider(instanceId: string, providerId: string): Promise<ProviderConfig | null> {
+    const config = await this.readOpenClawConfig(instanceId);
     const models = config.models as OpenClawModelsConfig | undefined;
 
     if (!models?.providers?.[providerId]) {
@@ -140,8 +150,8 @@ export class ModelService {
   /**
    * 添加或更新 provider
    */
-  async saveProvider(providerId: string, provider: Omit<ProviderConfig, 'apiKey'> & { apiKey?: string }): Promise<ProviderConfig> {
-    const config = await this.readOpenClawConfig();
+  async saveProvider(instanceId: string, providerId: string, provider: Omit<ProviderConfig, 'apiKey'> & { apiKey?: string }): Promise<ProviderConfig> {
+    const config = await this.readOpenClawConfig(instanceId);
 
     if (!config.models) {
       config.models = { mode: 'merge', providers: {} };
@@ -161,7 +171,7 @@ export class ModelService {
       models: provider.models || [],
     };
 
-    await this.writeOpenClawConfig(config);
+    await this.writeOpenClawConfig(instanceId, config);
 
     // 返回时隐藏 API Key
     const saved = config.models.providers[providerId];
@@ -174,8 +184,8 @@ export class ModelService {
   /**
    * 删除 provider
    */
-  async deleteProvider(providerId: string): Promise<boolean> {
-    const config = await this.readOpenClawConfig();
+  async deleteProvider(instanceId: string, providerId: string): Promise<boolean> {
+    const config = await this.readOpenClawConfig(instanceId);
     const models = config.models as OpenClawModelsConfig | undefined;
 
     if (!models?.providers?.[providerId]) {
@@ -183,7 +193,7 @@ export class ModelService {
     }
 
     delete models.providers[providerId];
-    await this.writeOpenClawConfig(config);
+    await this.writeOpenClawConfig(instanceId, config);
     return true;
   }
 
@@ -191,10 +201,11 @@ export class ModelService {
    * 添加模型到 provider
    */
   async addModelToProvider(
+    instanceId: string,
     providerId: string,
     model: ModelDefinitionConfig
   ): Promise<boolean> {
-    const config = await this.readOpenClawConfig();
+    const config = await this.readOpenClawConfig(instanceId);
     const models = config.models as OpenClawModelsConfig | undefined;
 
     if (!models?.providers?.[providerId]) {
@@ -211,15 +222,15 @@ export class ModelService {
       models.providers[providerId].models.push(model);
     }
 
-    await this.writeOpenClawConfig(config);
+    await this.writeOpenClawConfig(instanceId, config);
     return true;
   }
 
   /**
    * 从 provider 移除模型
    */
-  async removeModelFromProvider(providerId: string, modelId: string): Promise<boolean> {
-    const config = await this.readOpenClawConfig();
+  async removeModelFromProvider(instanceId: string, providerId: string, modelId: string): Promise<boolean> {
+    const config = await this.readOpenClawConfig(instanceId);
     const models = config.models as OpenClawModelsConfig | undefined;
 
     if (!models?.providers?.[providerId]) {
@@ -232,15 +243,15 @@ export class ModelService {
     }
 
     models.providers[providerId].models.splice(modelIndex, 1);
-    await this.writeOpenClawConfig(config);
+    await this.writeOpenClawConfig(instanceId, config);
     return true;
   }
 
   /**
    * 解密并返回 provider 的 API Key
    */
-  async getDecryptedApiKey(providerId: string): Promise<string | null> {
-    const config = await this.readOpenClawConfig();
+  async getDecryptedApiKey(instanceId: string, providerId: string): Promise<string | null> {
+    const config = await this.readOpenClawConfig(instanceId);
     const models = config.models as OpenClawModelsConfig | undefined;
 
     if (!models?.providers?.[providerId]?.apiKey) {
@@ -253,13 +264,13 @@ export class ModelService {
   /**
    * 测试 provider 连接
    */
-  async testProviderConnection(providerId: string): Promise<{ success: boolean; message: string }> {
-    const provider = await this.getProvider(providerId);
+  async testProviderConnection(instanceId: string, providerId: string): Promise<{ success: boolean; message: string }> {
+    const provider = await this.getProvider(instanceId, providerId);
     if (!provider) {
       return { success: false, message: 'Provider 不存在' };
     }
 
-    const apiKey = await this.getDecryptedApiKey(providerId);
+    const apiKey = await this.getDecryptedApiKey(instanceId, providerId);
     if (!apiKey) {
       return { success: false, message: 'API Key 未配置' };
     }
@@ -427,13 +438,13 @@ export class ModelService {
   /**
    * 测试单个模型是否可用
    */
-  async testModel(providerId: string, modelId: string): Promise<{ success: boolean; message: string }> {
-    const provider = await this.getProvider(providerId);
+  async testModel(instanceId: string, providerId: string, modelId: string): Promise<{ success: boolean; message: string }> {
+    const provider = await this.getProvider(instanceId, providerId);
     if (!provider) {
       return { success: false, message: 'Provider 不存在' };
     }
 
-    const apiKey = await this.getDecryptedApiKey(providerId);
+    const apiKey = await this.getDecryptedApiKey(instanceId, providerId);
     if (!apiKey) {
       return { success: false, message: 'API Key 未配置' };
     }
