@@ -188,22 +188,6 @@ async function handleAddModel(): Promise<void> {
   }
 }
 
-async function handleRemoveModel(modelId: string): Promise<void> {
-  if (!selectedProvider.value) return;
-  if (!confirm('确定要移除这个模型吗？')) return;
-
-  try {
-    await api.delete(`/models/providers/${selectedProvider.value.id}/models/${modelId}`);
-    // 刷新 provider 详情
-    const detailRes = await api.get(`/models/providers/${selectedProvider.value.id}`);
-    if (detailRes.ok && detailRes.data) {
-      selectedProvider.value = detailRes.data;
-    }
-  } catch (e) {
-    console.error(e);
-  }
-}
-
 async function handleTestModel(modelId: string): Promise<void> {
   if (!selectedProvider.value) return;
   if (!confirm(`确定要测试 ${modelId} 吗？`)) return;
