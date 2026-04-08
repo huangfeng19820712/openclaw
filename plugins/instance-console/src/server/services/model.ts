@@ -249,6 +249,180 @@ export class ModelService {
 
     return decryptApiKey(models.providers[providerId].apiKey!);
   }
+
+  /**
+   * 测试 provider 连接
+   */
+  async testProviderConnection(providerId: string): Promise<{ success: boolean; message: string }> {
+    const provider = await this.getProvider(providerId);
+    if (!provider) {
+      return { success: false, message: 'Provider 不存在' };
+    }
+
+    const apiKey = await this.getDecryptedApiKey(providerId);
+    if (!apiKey) {
+      return { success: false, message: 'API Key 未配置' };
+    }
+
+    const { api: apiType, baseUrl } = provider;
+
+    try {
+      let testUrl = '';
+      let testBody: unknown = {};
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      };
+
+      switch (apiType) {
+        case 'openai-responses':
+        case 'openai-completions':
+          testUrl = `${baseUrl}/chat/completions`;
+          testBody = {
+            model: provider.models[0]?.id || 'gpt-4o-mini',
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 5,
+          };
+          break;
+
+        case 'anthropic-messages':
+          testUrl = `${baseUrl}/messages`;
+          headers['anthropic-version'] = '2023-06-01';
+          testBody = {
+            model: provider.models[0]?.id || 'claude-3-5-haiku-latest',
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 10,
+          };
+          break;
+
+        case 'google-generative-ai':
+          testUrl = `${baseUrl}/models?key=${apiKey}`;
+          headers = { 'Content-Type': 'application/json' };
+          // Google 不需要 Authorization header
+          delete headers['Authorization'];
+          break;
+
+        default:
+          // 通用测试：尝试调用 models 列表接口
+          testUrl = `${baseUrl}/models`;
+          break;
+      }
+
+      const response = await fetch(testUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(testBody),
+      });
+
+      if (response.ok) {
+        const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+        // 提取模型信息
+        let modelInfo = '';
+        if (apiType === 'google-generative-ai' && Array.isArray(data.models)) {
+          modelInfo = `, 可用模型: ${(data.models as unknown[]).slice(0, 3).map((m: any) => String(m.name).split('/').pop()).join(', ')}`;
+        } else if (data.model) {
+          modelInfo = `, 模型: ${String(data.model)}`;
+        }
+        return { success: true, message: `连接成功${modelInfo}` };
+      } else {
+        const errorData = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const errorMsg = (errorData.error as Record<string, unknown>)?.message || (errorData.error as Record<string, unknown>)?.code || response.statusText;
+        return { success: false, message: `连接失败: ${errorMsg}` };
+      }
+    } catch (error) {
+      return { success: false, message: `连接错误: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /**
+   * 测试 provider 连接（临时配置，不保存）
+   */
+  async testProviderConfig(config: {
+    providerId: string;
+    baseUrl: string;
+    apiKey: string;
+    api: string;
+    modelId?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    const { providerId, baseUrl, apiKey, api: apiType, modelId } = config;
+
+    if (!apiKey) {
+      return { success: false, message: 'API Key 不能为空' };
+    }
+
+    try {
+      let testUrl = '';
+      let testBody: unknown = {};
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      };
+
+      const testModelId = modelId || this.getDefaultModelId(providerId);
+
+      switch (apiType) {
+        case 'openai-responses':
+        case 'openai-completions':
+          testUrl = `${baseUrl}/chat/completions`;
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 5,
+          };
+          break;
+
+        case 'anthropic-messages':
+          testUrl = `${baseUrl}/messages`;
+          headers['anthropic-version'] = '2023-06-01';
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 10,
+          };
+          break;
+
+        case 'google-generative-ai':
+          testUrl = `${baseUrl}/models?key=${apiKey}`;
+          headers = { 'Content-Type': 'application/json' };
+          delete headers['Authorization'];
+          break;
+
+        default:
+          testUrl = `${baseUrl}/models`;
+          break;
+      }
+
+      const response = await fetch(testUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(testBody),
+      });
+
+      if (response.ok) {
+        return { success: true, message: '连接成功' };
+      } else {
+        const errorData = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const errorMsg = (errorData.error as Record<string, unknown>)?.message || (errorData.error as Record<string, unknown>)?.code || response.statusText;
+        return { success: false, message: `连接失败: ${errorMsg}` };
+      }
+    } catch (error) {
+      return { success: false, message: `连接错误: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  private getDefaultModelId(providerId: string): string {
+    const defaults: Record<string, string> = {
+      'openai': 'gpt-4o-mini',
+      'anthropic': 'claude-3-5-haiku-latest',
+      'google': 'gemini-2.0-flash',
+      'moonshot': 'kimi-k2.5',
+      'minimax': 'MiniMax-M2.5',
+      'qianfan': 'ernie-4.0-8k-latest',
+      'zhipuai': 'glm-4-flash',
+      'ollama': 'llama3',
+    };
+    return defaults[providerId] || 'gpt-4o-mini';
+  }
 }
 
 // 预定义的 provider 配置模板

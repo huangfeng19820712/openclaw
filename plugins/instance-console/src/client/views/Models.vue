@@ -21,6 +21,8 @@ const newProvider = ref({
   apiKey: '',
   api: '',
 });
+const testingConfig = ref(false);
+const testConfigResult = ref<{ success: boolean; message: string } | null>(null);
 
 // 新增模型
 const newModel = ref({
@@ -92,10 +94,35 @@ async function handleAddProvider(): Promise<void> {
     if (response.ok) {
       await fetchProviders();
       showAddProviderForm.value = false;
+      testConfigResult.value = null;
       newProvider.value = { providerId: '', name: '', baseUrl: '', apiKey: '', api: '' };
     }
   } catch (e) {
     console.error(e);
+  }
+}
+
+async function handleTestConfig(): Promise<void> {
+  if (!newProvider.value.providerId || !newProvider.value.baseUrl || !newProvider.value.apiKey || !newProvider.value.api) {
+    testConfigResult.value = { success: false, message: '请填写完整的配置信息' };
+    return;
+  }
+
+  testingConfig.value = true;
+  testConfigResult.value = null;
+  try {
+    const response = await api.post('/models/providers/test-config', {
+      providerId: newProvider.value.providerId,
+      baseUrl: newProvider.value.baseUrl,
+      apiKey: newProvider.value.apiKey,
+      api: newProvider.value.api,
+    });
+
+    testConfigResult.value = response as { success: boolean; message: string };
+  } catch (e) {
+    testConfigResult.value = { success: false, message: `测试失败: ${e}` };
+  } finally {
+    testingConfig.value = false;
   }
 }
 
@@ -107,6 +134,21 @@ async function handleDeleteProvider(providerId: string): Promise<void> {
     await fetchProviders();
   } catch (e) {
     console.error(e);
+  }
+}
+
+async function handleTestProvider(provider: any): Promise<void> {
+  if (!confirm(`确定要测试 ${provider.id} 的连接吗？`)) return;
+
+  try {
+    const response = await api.post(`/models/providers/${provider.id}/test`);
+    if (response.ok) {
+      alert(`✅ ${(response as any).message || '连接成功'}`);
+    } else {
+      alert(`❌ ${(response as any).message || '连接失败'}`);
+    }
+  } catch (e) {
+    alert(`❌ 测试失败: ${e}`);
   }
 }
 
@@ -243,8 +285,16 @@ function getProviderTemplate(providerId: string): any {
               </select>
             </div>
 
+            <!-- 测试结果 -->
+            <div v-if="testConfigResult" class="p-3 rounded" :class="testConfigResult.success ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'">
+              {{ testConfigResult.message }}
+            </div>
+
             <div class="flex gap-3">
               <button @click="showAddProviderForm = false" class="btn btn-secondary">取消</button>
+              <button @click="handleTestConfig" class="btn btn-secondary" :disabled="testingConfig">
+                {{ testingConfig ? '测试中...' : '测试连接' }}
+              </button>
               <button @click="handleAddProvider" class="btn btn-primary">添加</button>
             </div>
           </div>
@@ -267,12 +317,21 @@ function getProviderTemplate(providerId: string): any {
                 <span class="font-semibold">{{ p.id }}</span>
                 <span class="text-slate-400 text-sm ml-2">{{ getProviderTemplate(p.id)?.name || '' }}</span>
               </div>
-              <button
-                @click.stop="handleDeleteProvider(p.id)"
-                class="text-slate-500 hover:text-red-400 p-1"
-              >
-                ✕
-              </button>
+              <div class="flex gap-2">
+                <button
+                  @click.stop="handleTestProvider(p)"
+                  class="text-slate-500 hover:text-green-400 p-1"
+                  title="测试连接"
+                >
+                  ✓
+                </button>
+                <button
+                  @click.stop="handleDeleteProvider(p.id)"
+                  class="text-slate-500 hover:text-red-400 p-1"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             <div class="text-sm text-slate-400 mt-2">
               <span>{{ p.modelCount }} 个模型</span>

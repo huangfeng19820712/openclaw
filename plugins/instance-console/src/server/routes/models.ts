@@ -106,6 +106,49 @@ export function createModelsRouter(modelService: ModelService) {
   });
 
   /**
+   * POST /api/models/providers/test-config
+   * 测试 Provider 配置（不保存）
+   */
+  router.post('/providers/test-config', async (req: Request, res: Response) => {
+    try {
+      const { providerId, baseUrl, apiKey, api, modelId } = req.body;
+
+      if (!providerId || !baseUrl || !apiKey || !api) {
+        res.status(400).json({ ok: false, error: '缺少必要的配置参数' });
+        return;
+      }
+
+      const result = await modelService.testProviderConfig({
+        providerId,
+        baseUrl,
+        apiKey,
+        api,
+        modelId,
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('Test provider config error:', error);
+      res.status(500).json({ ok: false, error: '测试连接失败' });
+    }
+  });
+
+  /**
+   * POST /api/models/providers/:providerId/test
+   * 测试已保存的 Provider 连接
+   */
+  router.post('/providers/:providerId/test', async (req: Request, res: Response) => {
+    try {
+      const { providerId } = req.params;
+      const result = await modelService.testProviderConnection(providerId);
+      res.json(result);
+    } catch (error) {
+      console.error('Test provider connection error:', error);
+      res.status(500).json({ ok: false, error: '测试连接失败' });
+    }
+  });
+
+  /**
    * DELETE /api/models/providers/:providerId
    * 删除 provider
    */
