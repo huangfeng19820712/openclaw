@@ -211,17 +211,17 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
 
   // ========== 其他 API 路由 ==========
 
-  // 实例路由
-  const instancesRouter = createInstancesRouter(services.instanceService);
-  app.use('/api/instances', jwtAuthMiddleware, instancesRouter);
-
-  // 模型路由 (每个实例独立的 providers/models)
+  // 模型路由 (每个实例独立的 providers/models) - 必须放在 /api/instances 前面
   const modelsRouter = createModelsRouter(services.modelService);
   app.use('/api/instances/:instanceId/models', jwtAuthMiddleware, modelsRouter);
 
-  // 渠道路由
+  // 渠道路由 - 必须放在 /api 前面
   const channelsRouter = createChannelsRouter(services.channelService);
-  app.use('/api', jwtAuthMiddleware, channelsRouter);
+  app.use('/api/instances/:instanceId/channels', jwtAuthMiddleware, channelsRouter);
+
+  // 实例路由
+  const instancesRouter = createInstancesRouter(services.instanceService);
+  app.use('/api/instances', jwtAuthMiddleware, instancesRouter);
 
   // 容器操作路由
   const containersRouter = createContainersRouter(services.containerService, services.operationLogService);
