@@ -68,6 +68,7 @@ export function createModelsRouter(modelService: ModelService) {
       res.json({
         ok: true,
         data: {
+          id: providerId,  // 添加 id 字段
           ...provider,
           apiKey: apiKey || undefined,
         },

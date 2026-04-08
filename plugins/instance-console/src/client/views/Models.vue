@@ -153,7 +153,10 @@ async function handleTestProvider(provider: any): Promise<void> {
 }
 
 async function handleAddModel(): Promise<void> {
-  if (!selectedProvider.value) return;
+  if (!selectedProvider.value || !selectedProvider.value.id) {
+    alert('请先选择一个 Provider');
+    return;
+  }
 
   try {
     const response = await api.post(`/models/providers/${selectedProvider.value.id}/models`, newModel.value);
