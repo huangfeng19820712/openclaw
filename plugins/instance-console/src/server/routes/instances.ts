@@ -66,7 +66,7 @@ export function createInstancesRouter(instanceService: InstanceService) {
 
   /**
    * POST /api/instances
-   * 创建新实例
+   * 创建新实例（异步方式）
    */
   router.post('/', async (req: Request, res: Response) => {
     try {
@@ -88,16 +88,82 @@ export function createInstancesRouter(instanceService: InstanceService) {
         return;
       }
 
-      const instance = await instanceService.createInstance({
+      // 异步创建，立即返回任务 ID
+      const { taskId } = instanceService.createInstance({
         sessionKey,
         displayName,
         dockerImage,
       });
 
-      res.status(201).json({ ok: true, data: instance });
+      res.status(202).json({ ok: true, data: { taskId } });
     } catch (error) {
       console.error('Create instance error:', error);
       res.status(500).json({ ok: false, error: `创建实例失败: ${error}` });
+    }
+  });
+
+  /**
+   * GET /api/instances/tasks/:taskId
+   * 获取创建任务状态
+   */
+  router.get('/tasks/:taskId', async (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      const task = instanceService.getCreateTask(taskId);
+
+      if (!task) {
+        res.status(404).json({ ok: false, error: '任务不存在' });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        data: {
+          status: task.status,
+          progress: task.progress,
+          error: task.error,
+        },
+      });
+    } catch (error) {
+      console.error('Get task error:', error);
+      res.status(500).json({ ok: false, error: '获取任务状态失败' });
+    }
+  });
+
+  /**
+   * GET /api/instances/tasks/:taskId/result
+   * 获取创建任务结果
+   */
+  router.get('/tasks/:taskId/result', async (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      const task = instanceService.getCreateTask(taskId);
+
+      if (!task) {
+        res.status(404).json({ ok: false, error: '任务不存在' });
+        return;
+      }
+
+      if (task.status === 'pending' || task.status === 'running') {
+        res.json({
+          ok: true,
+          data: {
+            status: task.status,
+            progress: task.progress,
+          },
+        });
+        return;
+      }
+
+      if (task.status === 'failed') {
+        res.status(400).json({ ok: false, error: task.error || '创建失败' });
+        return;
+      }
+
+      res.json({ ok: true, data: task.result });
+    } catch (error) {
+      console.error('Get task result error:', error);
+      res.status(500).json({ ok: false, error: '获取任务结果失败' });
     }
   });
 

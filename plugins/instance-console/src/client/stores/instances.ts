@@ -86,12 +86,40 @@ export const useInstancesStore = defineStore('instances', () => {
     }
   }
 
+  // 创建任务状态轮询
+  async function pollCreateTask(taskId: string, maxAttempts: number = 60, interval: number = 3000): Promise<Instance | null> {
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const response = await api.get(`/instances/tasks/${taskId}/result`);
+        if (response.ok && response.data) {
+          const data = response.data as any;
+          // 如果还在运行中，继续等待
+          if (data.status === 'pending' || data.status === 'running') {
+            await new Promise(resolve => setTimeout(resolve, interval));
+            continue;
+          }
+          // 失败
+          if (data.status === 'failed') {
+            throw new Error(data.error || '创建失败');
+          }
+          // 完成
+          await fetchInstances();
+          return data as Instance;
+        }
+      } catch (e) {
+        if (i === maxAttempts - 1) throw e;
+        await new Promise(resolve => setTimeout(resolve, interval));
+      }
+    }
+    return null;
+  }
+
   async function createInstance(input: InstanceCreateInput): Promise<Instance | null> {
     try {
-      const response = await api.post('/instances', input);
-      if (response.ok && response.data) {
-        await fetchInstances();
-        return response.data as Instance;
+      const response = await api.post<{ taskId: string }>('/instances', input);
+      if (response.ok && response.data?.taskId) {
+        // 轮询任务状态直到完成
+        return await pollCreateTask(response.data.taskId);
       }
       throw new Error(response.error || '创建实例失败');
     } catch (e) {

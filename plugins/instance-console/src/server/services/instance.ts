@@ -4,6 +4,16 @@ import type { LoadedConfig } from '../../config/loader.js';
 import type { ContainerService } from './container.js';
 import type { OperationLogService } from './operationLog.js';
 
+// 创建任务状态
+export interface CreateTask {
+  id: string;
+  instanceId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: string;
+  result?: Instance;
+  error?: string;
+}
+
 export class InstanceService {
   private config: LoadedConfig;
   private containerService: ContainerService;
@@ -12,6 +22,9 @@ export class InstanceService {
   private readonly deployWithInviteScriptPath = '/data/workspace/openclaw/deploy-instance-with-invite.sh';
   private readonly cleanupScriptPath = '/data/workspace/openclaw/cleanup-instance.sh';
   private readonly serverIp = '192.168.90.6';  // TODO: 动态获取服务器 IP
+
+  // 创建任务存储
+  private createTasks = new Map<string, CreateTask>();
 
   constructor(config: LoadedConfig, containerService: ContainerService, operationLogService: OperationLogService) {
     this.config = config;
@@ -151,59 +164,120 @@ export class InstanceService {
   }
 
   /**
-   * 创建新实例 - 调用 deploy-instance-with-invite.sh 脚本（完整流程）
+   * 创建新实例 - 异步方式，后台执行脚本
+   * 返回任务 ID，前端轮询获取进度
    */
-  async createInstance(input: InstanceCreateInput): Promise<Instance> {
+  createInstance(input: InstanceCreateInput): { taskId: string } {
+    const instanceId = input.sessionKey;
+    const taskId = `create-${instanceId}-${Date.now()}`;
+
+    // 创建任务
+    const task: CreateTask = {
+      id: taskId,
+      instanceId,
+      status: 'pending',
+      progress: '准备创建...',
+    };
+    this.createTasks.set(taskId, task);
+
+    // 后台执行脚本
+    setImmediate(() => this.runCreateScript(taskId, input));
+
+    // 立即返回任务 ID
+    return { taskId };
+  }
+
+  /**
+   * 后台执行创建脚本
+   */
+  private async runCreateScript(taskId: string, input: InstanceCreateInput): Promise<void> {
+    const task = this.createTasks.get(taskId);
+    if (!task) return;
+
     const instanceId = input.sessionKey;
     const containerName = `openclaw-${instanceId}-openclaw-gateway-1`;
 
-    // 调用 deploy-instance-with-invite.sh（完整流程：创建容器、复制插件、重启、生成邀请码）
-    const result = await this.execScript(this.deployWithInviteScriptPath, [instanceId]);
+    try {
+      task.status = 'running';
+      task.progress = '正在部署容器...';
 
-    if (result.code !== 0) {
-      await this.operationLogService.log('create', instanceId, 'instance', 'failed', result.stderr || result.stdout);
-      throw new Error(`创建实例失败: ${result.stderr || result.stdout}`);
+      // 调用 deploy-instance-with-invite.sh（完整流程：创建容器、复制插件、重启、生成邀请码）
+      const result = await this.execScript(this.deployWithInviteScriptPath, [instanceId]);
+
+      if (result.code !== 0) {
+        task.status = 'failed';
+        task.error = result.stderr || result.stdout;
+        await this.operationLogService.log('create', instanceId, 'instance', 'failed', task.error);
+        return;
+      }
+
+      task.progress = '正在提取邀请码...';
+
+      // 从输出中提取邀请码和访问 URL
+      let inviteCode = '';
+      let accessUrl = '';
+      let gatewayPort = 18789;
+
+      const codeMatch = result.stdout.match(/邀请码：\s*(\S+)/);
+      if (codeMatch) {
+        inviteCode = codeMatch[1];
+      }
+
+      const portMatch = result.stdout.match(/Gateway 端口：(\d+)/);
+      if (portMatch) {
+        gatewayPort = parseInt(portMatch[1], 10);
+      }
+
+      const urlMatch = result.stdout.match(/http:\/\/[^\s]+/);
+      if (urlMatch) {
+        accessUrl = urlMatch[0];
+      } else if (inviteCode) {
+        accessUrl = `http://${this.serverIp}:${gatewayPort}/?inviteCode=${inviteCode}&session=main`;
+      }
+
+      const now = new Date().toISOString();
+      task.progress = '创建完成';
+      task.status = 'completed';
+      task.result = {
+        id: containerName,
+        sessionKey: instanceId,
+        displayName: input.displayName,
+        containerName,
+        status: 'running',
+        image: input.dockerImage || 'openclaw:local',
+        createdAt: now,
+        lastUsedAt: now,
+        inviteCode,
+        accessUrl,
+        serverIp: this.serverIp,
+        gatewayPort,
+      };
+
+      await this.operationLogService.log('create', instanceId, 'instance', 'success');
+    } catch (error) {
+      task.status = 'failed';
+      task.error = error instanceof Error ? error.message : String(error);
+      await this.operationLogService.log('create', instanceId, 'instance', 'failed', task.error);
     }
+  }
 
-    // 从输出中提取邀请码和访问 URL
-    let inviteCode = '';
-    let accessUrl = '';
-    let gatewayPort = 18789;
+  /**
+   * 获取创建任务状态
+   */
+  getCreateTask(taskId: string): CreateTask | null {
+    return this.createTasks.get(taskId) || null;
+  }
 
-    const codeMatch = result.stdout.match(/邀请码：\s*(\S+)/);
-    if (codeMatch) {
-      inviteCode = codeMatch[1];
+  /**
+   * 获取创建任务状态（兼容旧接口，通过 instanceId）
+   */
+  async getCreateTaskByInstanceId(instanceId: string): Promise<CreateTask | null> {
+    for (const task of this.createTasks.values()) {
+      if (task.instanceId === instanceId) {
+        return task;
+      }
     }
-
-    const portMatch = result.stdout.match(/Gateway 端口：(\d+)/);
-    if (portMatch) {
-      gatewayPort = parseInt(portMatch[1], 10);
-    }
-
-    const urlMatch = result.stdout.match(/http:\/\/[^\s]+/);
-    if (urlMatch) {
-      accessUrl = urlMatch[0];
-    } else if (inviteCode) {
-      accessUrl = `http://${this.serverIp}:${gatewayPort}/?inviteCode=${inviteCode}&session=main`;
-    }
-
-    const now = new Date().toISOString();
-    await this.operationLogService.log('create', instanceId, 'instance', 'success');
-
-    return {
-      id: containerName,
-      sessionKey: instanceId,
-      displayName: input.displayName,
-      containerName,
-      status: 'running',
-      image: input.dockerImage || 'openclaw:local',
-      createdAt: now,
-      lastUsedAt: now,
-      inviteCode,
-      accessUrl,
-      serverIp: this.serverIp,
-      gatewayPort,
-    };
+    return null;
   }
 
   /**
