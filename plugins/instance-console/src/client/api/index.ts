@@ -88,7 +88,9 @@ class ApiClient {
   }
 
   async delete<T = unknown>(url: string, data?: unknown): Promise<ApiResponse<T>> {
-    return this.request<T>('DELETE', url, data);
+    // axios DELETE requests don't send body by default, need explicit config
+    const config = data ? { data } : {};
+    return this.request<T>('DELETE', url, undefined, config);
   }
 }
 
