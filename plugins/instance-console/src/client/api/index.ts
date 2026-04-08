@@ -37,7 +37,13 @@ class ApiClient {
       (error) => {
         if (error.response?.status === 401) {
           localStorage.removeItem('token');
-          window.location.href = '/login';
+          // 使用 Vue Router 避免页面刷新
+          // 注意：这里使用动态导入避免循环依赖
+          import('../router').then(({ router }) => {
+            router.push('/login');
+          }).catch(() => {
+            window.location.href = '/login';
+          });
         }
         return Promise.reject(error);
       }
