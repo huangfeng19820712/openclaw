@@ -12,6 +12,12 @@ export interface Instance {
   createdAt: string;
   lastUsedAt: string;
   ports?: Record<string, string>;
+  // 邀请码信息（创建后返回）
+  inviteCode?: string;
+  inviteCodeName?: string;
+  accessUrl?: string;
+  serverIp?: string;
+  gatewayPort?: number;
 }
 
 export interface InstanceCreateInput {

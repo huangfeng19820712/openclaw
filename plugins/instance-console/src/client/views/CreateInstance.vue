@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { useInstancesStore } from '../stores/instances';
+import { useInstancesStore, type Instance } from '../stores/instances';
 
 const router = useRouter();
 const instancesStore = useInstancesStore();
@@ -10,6 +10,7 @@ const instanceId = ref('');
 const dockerImage = ref('openclaw:local');
 const loading = ref(false);
 const error = ref('');
+const createdInstance = ref<Instance | null>(null);
 
 async function handleSubmit(): Promise<void> {
   if (!instanceId.value.trim()) {
@@ -25,6 +26,7 @@ async function handleSubmit(): Promise<void> {
 
   loading.value = true;
   error.value = '';
+  createdInstance.value = null;
 
   try {
     const instance = await instancesStore.createInstance({
@@ -33,7 +35,7 @@ async function handleSubmit(): Promise<void> {
     });
 
     if (instance) {
-      router.push(`/instances/${instance.sessionKey}`);
+      createdInstance.value = instance;
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : '创建失败';
@@ -44,6 +46,12 @@ async function handleSubmit(): Promise<void> {
 
 function goBack(): void {
   router.push('/');
+}
+
+function goToInstance(): void {
+  if (createdInstance.value) {
+    router.push(`/instances/${createdInstance.value.sessionKey}`);
+  }
 }
 </script>
 
@@ -56,7 +64,7 @@ function goBack(): void {
       <h1 class="text-2xl font-bold">创建新实例</h1>
     </div>
 
-    <form @submit.prevent="handleSubmit" class="space-y-6">
+    <form v-if="!createdInstance" @submit.prevent="handleSubmit" class="space-y-6">
       <div class="card">
         <h2 class="text-lg font-semibold mb-4">实例信息</h2>
 
@@ -105,5 +113,49 @@ function goBack(): void {
         </button>
       </div>
     </form>
+
+    <!-- 创建成功显示邀请码信息 -->
+    <div v-else class="space-y-6">
+      <div class="card bg-green-500/10 border border-green-500/30">
+        <h2 class="text-lg font-semibold mb-4 text-green-400">✅ 实例创建成功</h2>
+
+        <div class="space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm text-slate-400 mb-1">实例 ID</label>
+              <p class="font-mono">{{ createdInstance.sessionKey }}</p>
+            </div>
+            <div>
+              <label class="block text-sm text-slate-400 mb-1">容器名称</label>
+              <p class="font-mono text-sm">{{ createdInstance.containerName }}</p>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">访问地址</label>
+            <div class="p-3 bg-bg-dark rounded font-mono text-sm break-all">
+              {{ createdInstance.accessUrl }}
+            </div>
+            <p class="text-xs text-slate-500 mt-1">
+              复制链接到浏览器打开完成初始配置
+            </p>
+          </div>
+
+          <div v-if="createdInstance.inviteCode">
+            <label class="block text-sm text-slate-400 mb-1">邀请码</label>
+            <p class="font-mono text-lg text-primary">{{ createdInstance.inviteCode }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex gap-3">
+        <button @click="goBack" class="btn btn-secondary flex-1">
+          返回列表
+        </button>
+        <button @click="goToInstance" class="btn btn-primary flex-1">
+          查看详情
+        </button>
+      </div>
+    </div>
   </div>
 </template>
