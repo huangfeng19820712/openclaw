@@ -168,6 +168,22 @@ export function createInstancesRouter(instanceService: InstanceService) {
   });
 
   /**
+   * POST /api/instances/:id/generate-invite
+   * 为已有实例生成邀请码
+   */
+  router.post('/:id/generate-invite', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const result = await instanceService.generateInviteCode(id);
+
+      res.json({ ok: true, data: result });
+    } catch (error) {
+      console.error('Generate invite error:', error);
+      res.status(500).json({ ok: false, error: `生成邀请码失败: ${error}` });
+    }
+  });
+
+  /**
    * PUT /api/instances/:id
    * 更新实例配置
    */

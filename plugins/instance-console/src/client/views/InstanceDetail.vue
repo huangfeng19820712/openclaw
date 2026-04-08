@@ -17,6 +17,11 @@ const showLogs = ref(false);
 const showDeleteDialog = ref(false);
 const envVars = ref<Array<{ key: string; value: string }>>([]);
 
+// 邀请码相关
+const inviteCodeLoading = ref(false);
+const inviteCode = ref<string>('');
+const accessUrl = ref<string>('');
+
 const sessionKey = computed(() => route.params.id as string);
 
 onMounted(async () => {
@@ -107,6 +112,30 @@ function goToChannels(): void {
   router.push(`/instances/${sessionKey.value}/channels`);
 }
 
+async function handleGenerateInvite(): Promise<void> {
+  if (!instance.value) return;
+  inviteCodeLoading.value = true;
+  try {
+    const response = await fetch(`/api/instances/${instance.value.sessionKey}/generate-invite`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+    });
+    const data = await response.json();
+    if (data.ok) {
+      inviteCode.value = data.data.inviteCode;
+      accessUrl.value = data.data.accessUrl;
+    } else {
+      alert(`生成邀请码失败: ${data.error}`);
+    }
+  } catch (e) {
+    alert(`生成邀请码失败: ${e}`);
+  } finally {
+    inviteCodeLoading.value = false;
+  }
+}
+
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString('zh-CN');
 }
@@ -187,6 +216,41 @@ function formatDate(dateStr: string): string {
             <span class="text-slate-400">→</span>
             <span class="font-mono text-slate-300">{{ hostPort }}</span>
           </div>
+        </div>
+      </div>
+
+      <!-- 邀请码访问 -->
+      <div class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold">邀请码访问</h3>
+          <button
+            @click="handleGenerateInvite"
+            :disabled="inviteCodeLoading"
+            class="btn btn-primary text-sm"
+          >
+            {{ inviteCodeLoading ? '生成中...' : '生成邀请码' }}
+          </button>
+        </div>
+
+        <div v-if="inviteCode" class="space-y-4">
+          <div class="p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+            <div class="mb-3">
+              <label class="text-sm text-slate-400">邀请码</label>
+              <p class="text-2xl font-bold text-green-400 font-mono">{{ inviteCode }}</p>
+            </div>
+            <div>
+              <label class="text-sm text-slate-400">访问地址</label>
+              <div class="p-3 bg-bg-dark rounded font-mono text-sm break-all text-slate-300">
+                {{ accessUrl }}
+              </div>
+            </div>
+            <p class="text-xs text-slate-500 mt-2">
+              复制链接到浏览器打开完成初始配置
+            </p>
+          </div>
+        </div>
+        <div v-else class="text-slate-500 text-sm">
+          点击"生成邀请码"获取访问链接
         </div>
       </div>
 

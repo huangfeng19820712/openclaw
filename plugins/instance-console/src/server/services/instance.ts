@@ -311,4 +311,50 @@ export class InstanceService {
     return true;
   }
 
+  /**
+   * 为已有实例生成邀请码
+   */
+  async generateInviteCode(instanceId: string): Promise<{ inviteCode: string; accessUrl: string; gatewayPort: number }> {
+    const instance = await this.getInstanceBySessionKey(instanceId);
+    if (!instance) {
+      throw new Error('实例不存在');
+    }
+
+    const containerName = instance.containerName;
+    const inviteCodeName = `manual-${Date.now()}`;
+
+    // 生成邀请码
+    const result = await this.execDocker([
+      'exec', containerName,
+      'node', '/home/node/.openclaw/extensions/node-auto-register/scripts/generate-control-ui-invite-code.js',
+      inviteCodeName
+    ]);
+
+    if (result.code !== 0) {
+      throw new Error(`生成邀请码失败: ${result.stderr || result.stdout}`);
+    }
+
+    // 解析邀请码
+    const codeMatch = result.stdout.match(/Invite Code:\s*(\S+)/);
+    const inviteCode = codeMatch ? codeMatch[1] : '';
+
+    if (!inviteCode) {
+      throw new Error('无法解析邀请码');
+    }
+
+    // 获取端口
+    const ports = await this.containerService.getContainerPorts(containerName);
+    let gatewayPort = 18789;
+    for (const [port, binding] of Object.entries(ports || {})) {
+      if (port.includes('18789')) {
+        gatewayPort = parseInt(binding.split(':')[1] || '18789', 10);
+        break;
+      }
+    }
+
+    const accessUrl = `http://${this.serverIp}:${gatewayPort}/?inviteCode=${inviteCode}&session=main`;
+
+    return { inviteCode, accessUrl, gatewayPort };
+  }
+
 }
