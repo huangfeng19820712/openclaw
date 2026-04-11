@@ -11,7 +11,7 @@ export function createChannelsRouter(channelService: ChannelService) {
    */
   router.get('/channels', async (req: Request, res: Response) => {
     try {
-      const { instanceId } = req.params;
+      const instanceId = req.instanceId as string;
       const channels = await channelService.getChannelsByInstance(instanceId);
 
       res.json({
@@ -33,7 +33,7 @@ export function createChannelsRouter(channelService: ChannelService) {
    */
   router.post('/channels', async (req: Request, res: Response) => {
     try {
-      const { instanceId } = req.params;
+      const instanceId = req.instanceId as string;
       const { type, credentials, routingRules } = req.body;
 
       if (!type || !credentials) {
@@ -60,7 +60,8 @@ export function createChannelsRouter(channelService: ChannelService) {
    */
   router.get('/channels/:channelId', async (req: Request, res: Response) => {
     try {
-      const { instanceId, channelId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { channelId } = req.params;
       const channel = await channelService.getChannel(instanceId, channelId);
 
       if (!channel) {
@@ -81,7 +82,8 @@ export function createChannelsRouter(channelService: ChannelService) {
    */
   router.delete('/channels/:channelId', async (req: Request, res: Response) => {
     try {
-      const { instanceId, channelId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { channelId } = req.params;
       const deleted = await channelService.removeChannel(instanceId, channelId);
 
       if (!deleted) {
@@ -102,7 +104,8 @@ export function createChannelsRouter(channelService: ChannelService) {
    */
   router.post('/channels/:channelId/test', async (req: Request, res: Response) => {
     try {
-      const { instanceId, channelId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { channelId } = req.params;
       const result = await channelService.testChannel(instanceId, channelId);
 
       res.json({ ok: true, data: result });

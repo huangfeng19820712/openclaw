@@ -37,7 +37,7 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.get('/providers', async (req: Request, res: Response) => {
     try {
-      const { instanceId } = req.params;
+      const instanceId = req.instanceId as string;
       const providers = await modelService.getConfiguredProviders(instanceId);
       res.json({
         ok: true,
@@ -55,7 +55,8 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.get('/providers/:providerId', async (req: Request, res: Response) => {
     try {
-      const { instanceId, providerId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { providerId } = req.params;
       const provider = await modelService.getProvider(instanceId, providerId);
 
       if (!provider) {
@@ -86,7 +87,7 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.post('/providers', async (req: Request, res: Response) => {
     try {
-      const { instanceId } = req.params;
+      const instanceId = req.instanceId as string;
       const { providerId, baseUrl, apiKey, api, models } = req.body;
 
       if (!providerId || !baseUrl) {
@@ -142,7 +143,8 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.post('/providers/:providerId/test', async (req: Request, res: Response) => {
     try {
-      const { instanceId, providerId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { providerId } = req.params;
       const result = await modelService.testProviderConnection(instanceId, providerId);
       res.json(result);
     } catch (error) {
@@ -157,7 +159,8 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.delete('/providers/:providerId', async (req: Request, res: Response) => {
     try {
-      const { instanceId, providerId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { providerId } = req.params;
       const deleted = await modelService.deleteProvider(instanceId, providerId);
 
       if (!deleted) {
@@ -178,7 +181,8 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.post('/providers/:providerId/models', async (req: Request, res: Response) => {
     try {
-      const { instanceId, providerId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { providerId } = req.params;
       const model: ModelDefinitionConfig = req.body;
 
       if (!model.id) {
@@ -206,7 +210,8 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.delete('/providers/:providerId/models/:modelId', async (req: Request, res: Response) => {
     try {
-      const { instanceId, providerId, modelId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { providerId, modelId } = req.params;
       const deleted = await modelService.removeModelFromProvider(instanceId, providerId, modelId);
 
       if (!deleted) {
@@ -227,7 +232,8 @@ export function createModelsRouter(modelService: ModelService) {
    */
   router.post('/providers/:providerId/models/:modelId/test', async (req: Request, res: Response) => {
     try {
-      const { instanceId, providerId, modelId } = req.params;
+      const instanceId = req.instanceId as string;
+      const { providerId, modelId } = req.params;
       const result = await modelService.testModel(instanceId, providerId, modelId);
       res.json(result);
     } catch (error) {

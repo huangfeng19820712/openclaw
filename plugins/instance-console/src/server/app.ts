@@ -212,12 +212,20 @@ export function createApp(services: AppServices, config: LoadedConfig): Express 
   // ========== 其他 API 路由 ==========
 
   // 模型路由 (每个实例独立的 providers/models) - 必须放在 /api/instances 前面
+  // 注意：Express Router 会重置 req.params，所以需要用中间件保存 instanceId
   const modelsRouter = createModelsRouter(services.modelService);
-  app.use('/api/instances/:instanceId/models', jwtAuthMiddleware, modelsRouter);
+  app.use('/api/instances/:instanceId/models', (req, _res, next) => {
+    req.instanceId = req.params.instanceId;
+    next();
+  }, jwtAuthMiddleware, modelsRouter);
 
   // 渠道路由 - 必须放在 /api 前面
+  // 注意：Express Router 会重置 req.params，所以需要用中间件保存 instanceId
   const channelsRouter = createChannelsRouter(services.channelService);
-  app.use('/api/instances/:instanceId/channels', jwtAuthMiddleware, channelsRouter);
+  app.use('/api/instances/:instanceId/channels', (req, _res, next) => {
+    req.instanceId = req.params.instanceId;
+    next();
+  }, jwtAuthMiddleware, channelsRouter);
 
   // 实例路由
   const instancesRouter = createInstancesRouter(services.instanceService);
