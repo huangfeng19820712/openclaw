@@ -1,0 +1,27 @@
+{
+  "id": "node-auto-register",
+  "name": "Node Auto-Register",
+  "description": "Auto-register openclaw node with invite code. Also provides Control UI auto-pair functionality.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable auto-register functionality"
+      },
+      "inviteExpiryDays": {
+        "type": "number",
+        "default": 365,
+        "description": "Default invite code expiry days for Control UI"
+      },
+      "inviteMaxUses": {
+        "type": "number",
+        "default": 999,
+        "description": "Default max uses for Control UI invite codes"
+      }
+    },
+    "additionalProperties": true
+  }
+}

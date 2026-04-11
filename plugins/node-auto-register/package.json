@@ -1,0 +1,28 @@
+{
+  "name": "openclaw-node-auto-register",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Auto-register openclaw node with invite code. Also provides Control UI auto-pair functionality.",
+  "main": "src/index.js",
+  "bin": {
+    "openclaw-node-register": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "generate-control-ui-invite": "node scripts/generate-control-ui-invite-code.js",
+    "inject-auto-pair": "node scripts/inject-auto-pair-script.js inject",
+    "remove-auto-pair": "node scripts/inject-auto-pair-script.js remove"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.14.0",
+    "commander": "^11.1.0"
+  },
+  "openclaw": {
+    "id": "node-auto-register",
+    "entry": "src/index.js",
+    "extensions": ["src/index.js"]
+  }
+}

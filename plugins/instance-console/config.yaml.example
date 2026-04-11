@@ -1,0 +1,33 @@
+# Instance Console 配置示例
+# 复制此文件为 config.yaml 并修改相应配置
+
+server:
+  port: 12548
+  host: "0.0.0.0"
+
+auth:
+  jwtSecret: "your-secret-key-change-in-production"
+  sessionExpire: 86400
+
+cors:
+  allowedOrigins:
+    - "http://localhost:18790"
+    - "http://localhost:18791"
+
+openclaw:
+  configDir: "~/.openclaw"
+  registryFile: "~/.openclaw/sandbox/containers.json"
+
+api:
+  enableApiKey: true
+  rateLimit: 100
+
+webhook:
+  enabled: false
+  url: ""
+  secret: ""
+  events:
+    - instance.created
+    - instance.started
+    - instance.stopped
+    - instance.deleted

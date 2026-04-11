@@ -1,0 +1,628 @@
+import { readFileIfExists, expandHomePath, generateId } from '../../shared/utils.js';
+import type { LoadedConfig } from '../../config/loader.js';
+import { writeFile } from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
+
+// Provider 定义
+export interface ProviderConfig {
+  baseUrl: string;
+  apiKey?: string;  // 加密存储
+  auth?: string;
+  api?: string;
+  models: ModelDefinitionConfig[];
+}
+
+export interface ModelDefinitionConfig {
+  id: string;
+  name: string;
+  api?: string;
+  reasoning?: boolean;
+  input?: string[];
+  cost?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+export interface OpenClawModelsConfig {
+  mode?: 'merge' | 'replace';
+  providers?: Record<string, ProviderConfig>;
+}
+
+// API Key 加密
+const ENCRYPTION_KEY = crypto.scryptSync('instance-console-models', 'salt', 32);
+
+function encryptApiKey(apiKey: string): string {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(apiKey, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted;
+}
+
+function decryptApiKey(encrypted: string): string {
+  try {
+    const [ivHex, encryptedData] = encrypted.split(':');
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch {
+    return '';
+  }
+}
+
+interface OpenClawConfigRoot {
+  models?: OpenClawModelsConfig;
+  [key: string]: unknown;
+}
+
+export class ModelService {
+  private config: LoadedConfig;
+
+  // 多实例部署配置目录
+  private readonly instanceBasePath = '/data/openclaw/openclaw_instances';
+
+  constructor(config: LoadedConfig) {
+    this.config = config;
+  }
+
+  /**
+   * 获取指定实例的配置路径
+   */
+  private getInstanceConfigPath(instanceId: string): string {
+    return path.join(this.instanceBasePath, instanceId, 'openclaw.json');
+  }
+
+  /**
+   * 初始化 - 新版本不需要初始化操作
+   */
+  async init(): Promise<void> {
+    // No-op for new version
+  }
+
+  /**
+   * 读取 openclaw.json 配置
+   */
+  private async readOpenClawConfig(instanceId: string): Promise<OpenClawConfigRoot> {
+    const configPath = this.getInstanceConfigPath(instanceId);
+    const content = await readFileIfExists(configPath);
+    if (!content) {
+      return {};
+    }
+    try {
+      return JSON.parse(content) as OpenClawConfigRoot;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 写入 openclaw.json 配置
+   */
+  private async writeOpenClawConfig(instanceId: string, config: OpenClawConfigRoot): Promise<void> {
+    const configPath = this.getInstanceConfigPath(instanceId);
+    const dir = path.dirname(configPath);
+    const { ensureDir } = await import('../../shared/utils.js');
+    await ensureDir(dir);
+    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  }
+
+  /**
+   * 获取所有已配置的 providers
+   */
+  async getConfiguredProviders(instanceId: string): Promise<Array<{ id: string; baseUrl: string; modelCount: number; hasApiKey: boolean }>> {
+    const config = await this.readOpenClawConfig(instanceId);
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers) {
+      return [];
+    }
+
+    return Object.entries(models.providers).map(([id, provider]) => ({
+      id,
+      baseUrl: provider.baseUrl || '',
+      modelCount: provider.models?.length || 0,
+      hasApiKey: Boolean(provider.apiKey),
+    }));
+  }
+
+  /**
+   * 获取 provider 的详细信息
+   */
+  async getProvider(instanceId: string, providerId: string): Promise<ProviderConfig | null> {
+    const config = await this.readOpenClawConfig(instanceId);
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]) {
+      return null;
+    }
+
+    return models.providers[providerId];
+  }
+
+  /**
+   * 添加或更新 provider
+   */
+  async saveProvider(instanceId: string, providerId: string, provider: Omit<ProviderConfig, 'apiKey'> & { apiKey?: string }): Promise<ProviderConfig> {
+    const config = await this.readOpenClawConfig(instanceId);
+
+    if (!config.models) {
+      config.models = { mode: 'merge', providers: {} };
+    }
+    if (!config.models.providers) {
+      config.models.providers = {};
+    }
+
+    // 加密 API Key
+    const encryptedApiKey = provider.apiKey ? encryptApiKey(provider.apiKey) : undefined;
+
+    config.models.providers[providerId] = {
+      baseUrl: provider.baseUrl,
+      apiKey: encryptedApiKey,
+      auth: provider.auth,
+      api: provider.api,
+      models: provider.models || [],
+    };
+
+    await this.writeOpenClawConfig(instanceId, config);
+
+    // 返回时隐藏 API Key
+    const saved = config.models.providers[providerId];
+    return {
+      ...saved,
+      apiKey: undefined,
+    };
+  }
+
+  /**
+   * 删除 provider
+   */
+  async deleteProvider(instanceId: string, providerId: string): Promise<boolean> {
+    const config = await this.readOpenClawConfig(instanceId);
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]) {
+      return false;
+    }
+
+    delete models.providers[providerId];
+    await this.writeOpenClawConfig(instanceId, config);
+    return true;
+  }
+
+  /**
+   * 添加模型到 provider
+   */
+  async addModelToProvider(
+    instanceId: string,
+    providerId: string,
+    model: ModelDefinitionConfig
+  ): Promise<boolean> {
+    const config = await this.readOpenClawConfig(instanceId);
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]) {
+      return false;
+    }
+
+    // 检查模型是否已存在
+    const existingIndex = models.providers[providerId].models.findIndex(m => m.id === model.id);
+    if (existingIndex >= 0) {
+      // 更新现有模型
+      models.providers[providerId].models[existingIndex] = model;
+    } else {
+      // 添加新模型
+      models.providers[providerId].models.push(model);
+    }
+
+    await this.writeOpenClawConfig(instanceId, config);
+    return true;
+  }
+
+  /**
+   * 从 provider 移除模型
+   */
+  async removeModelFromProvider(instanceId: string, providerId: string, modelId: string): Promise<boolean> {
+    const config = await this.readOpenClawConfig(instanceId);
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]) {
+      return false;
+    }
+
+    const modelIndex = models.providers[providerId].models.findIndex(m => m.id === modelId);
+    if (modelIndex < 0) {
+      return false;
+    }
+
+    models.providers[providerId].models.splice(modelIndex, 1);
+    await this.writeOpenClawConfig(instanceId, config);
+    return true;
+  }
+
+  /**
+   * 解密并返回 provider 的 API Key
+   */
+  async getDecryptedApiKey(instanceId: string, providerId: string): Promise<string | null> {
+    const config = await this.readOpenClawConfig(instanceId);
+    const models = config.models as OpenClawModelsConfig | undefined;
+
+    if (!models?.providers?.[providerId]?.apiKey) {
+      return null;
+    }
+
+    return decryptApiKey(models.providers[providerId].apiKey!);
+  }
+
+  /**
+   * 测试 provider 连接
+   */
+  async testProviderConnection(instanceId: string, providerId: string): Promise<{ success: boolean; message: string }> {
+    const provider = await this.getProvider(instanceId, providerId);
+    if (!provider) {
+      return { success: false, message: 'Provider 不存在' };
+    }
+
+    const apiKey = await this.getDecryptedApiKey(instanceId, providerId);
+    if (!apiKey) {
+      return { success: false, message: 'API Key 未配置' };
+    }
+
+    const { api: apiType, baseUrl } = provider;
+
+    try {
+      let testUrl = '';
+      let testBody: unknown = {};
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      };
+
+      switch (apiType) {
+        case 'openai-responses':
+        case 'openai-completions':
+          testUrl = `${baseUrl}/chat/completions`;
+          testBody = {
+            model: provider.models[0]?.id || 'gpt-4o-mini',
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 5,
+          };
+          break;
+
+        case 'anthropic-messages':
+          testUrl = `${baseUrl}/messages`;
+          headers['anthropic-version'] = '2023-06-01';
+          testBody = {
+            model: provider.models[0]?.id || 'claude-3-5-haiku-latest',
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 10,
+          };
+          break;
+
+        case 'google-generative-ai':
+          testUrl = `${baseUrl}/models?key=${apiKey}`;
+          headers = { 'Content-Type': 'application/json' };
+          // Google 不需要 Authorization header
+          delete headers['Authorization'];
+          break;
+
+        default:
+          // 通用测试：尝试调用 models 列表接口
+          testUrl = `${baseUrl}/models`;
+          break;
+      }
+
+      const response = await fetch(testUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(testBody),
+      });
+
+      if (response.ok) {
+        const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+        // 提取模型信息
+        let modelInfo = '';
+        if (apiType === 'google-generative-ai' && Array.isArray(data.models)) {
+          modelInfo = `, 可用模型: ${(data.models as unknown[]).slice(0, 3).map((m: any) => String(m.name).split('/').pop()).join(', ')}`;
+        } else if (data.model) {
+          modelInfo = `, 模型: ${String(data.model)}`;
+        }
+        return { success: true, message: `连接成功${modelInfo}` };
+      } else {
+        const errorData = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const errorMsg = (errorData.error as Record<string, unknown>)?.message || (errorData.error as Record<string, unknown>)?.code || response.statusText;
+        return { success: false, message: `连接失败: ${errorMsg}` };
+      }
+    } catch (error) {
+      return { success: false, message: `连接错误: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /**
+   * 测试 provider 连接（临时配置，不保存）
+   */
+  async testProviderConfig(config: {
+    providerId: string;
+    baseUrl: string;
+    apiKey: string;
+    api: string;
+    modelId?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    const { providerId, baseUrl, apiKey, api: apiType, modelId } = config;
+
+    if (!apiKey) {
+      return { success: false, message: 'API Key 不能为空' };
+    }
+
+    try {
+      let testUrl = '';
+      let testBody: unknown = {};
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      };
+
+      const testModelId = modelId || this.getDefaultModelId(providerId);
+
+      switch (apiType) {
+        case 'openai-responses':
+        case 'openai-completions':
+          testUrl = `${baseUrl}/chat/completions`;
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 5,
+          };
+          break;
+
+        case 'anthropic-messages':
+          testUrl = `${baseUrl}/messages`;
+          headers['anthropic-version'] = '2023-06-01';
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 10,
+          };
+          break;
+
+        case 'google-generative-ai':
+          testUrl = `${baseUrl}/models?key=${apiKey}`;
+          headers = { 'Content-Type': 'application/json' };
+          delete headers['Authorization'];
+          break;
+
+        default:
+          testUrl = `${baseUrl}/models`;
+          break;
+      }
+
+      const response = await fetch(testUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(testBody),
+      });
+
+      if (response.ok) {
+        return { success: true, message: '连接成功' };
+      } else {
+        const errorData = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const errorMsg = (errorData.error as Record<string, unknown>)?.message || (errorData.error as Record<string, unknown>)?.code || response.statusText;
+        return { success: false, message: `连接失败: ${errorMsg}` };
+      }
+    } catch (error) {
+      return { success: false, message: `连接错误: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  private getDefaultModelId(providerId: string): string {
+    const defaults: Record<string, string> = {
+      'openai': 'gpt-4o-mini',
+      'anthropic': 'claude-3-5-haiku-latest',
+      'google': 'gemini-2.0-flash',
+      'moonshot': 'kimi-k2.5',
+      'minimax': 'MiniMax-M2.5',
+      'qianfan': 'ernie-4.0-8k-latest',
+      'zhipuai': 'glm-4-flash',
+      'ollama': 'llama3',
+    };
+    return defaults[providerId] || 'gpt-4o-mini';
+  }
+
+  /**
+   * 测试单个模型是否可用
+   */
+  async testModel(instanceId: string, providerId: string, modelId: string): Promise<{ success: boolean; message: string }> {
+    const provider = await this.getProvider(instanceId, providerId);
+    if (!provider) {
+      return { success: false, message: 'Provider 不存在' };
+    }
+
+    const apiKey = await this.getDecryptedApiKey(instanceId, providerId);
+    if (!apiKey) {
+      return { success: false, message: 'API Key 未配置' };
+    }
+
+    const model = provider.models.find(m => m.id === modelId);
+    if (!model) {
+      return { success: false, message: '模型不存在' };
+    }
+
+    const { api: apiType, baseUrl } = provider;
+    const testModelId = modelId;
+
+    try {
+      let testUrl = '';
+      let testBody: unknown = {};
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      };
+
+      switch (apiType) {
+        case 'openai-responses':
+        case 'openai-completions':
+          testUrl = `${baseUrl}/chat/completions`;
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 5,
+          };
+          break;
+
+        case 'anthropic-messages':
+          testUrl = `${baseUrl}/messages`;
+          headers['anthropic-version'] = '2023-06-01';
+          testBody = {
+            model: testModelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 10,
+          };
+          break;
+
+        case 'google-generative-ai':
+          testUrl = `${baseUrl}/models?key=${apiKey}`;
+          headers = { 'Content-Type': 'application/json' };
+          delete headers['Authorization'];
+          // Google 需要单独测试
+          const response = await fetch(testUrl, { method: 'GET', headers });
+          if (response.ok) {
+            return { success: true, message: '模型可用' };
+          } else {
+            const errorData = await response.json().catch(() => ({}));
+            return { success: false, message: `模型不可用: ${JSON.stringify(errorData)}` };
+          }
+
+        default:
+          return { success: false, message: '不支持的 API 类型' };
+      }
+
+      const response = await fetch(testUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(testBody),
+      });
+
+      if (response.ok) {
+        const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+        let modelInfo = '';
+        if (data.model) {
+          modelInfo = `, 模型: ${String(data.model)}`;
+        }
+        return { success: true, message: `模型正常${modelInfo}` };
+      } else {
+        const errorData = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const errorMsg = (errorData.error as Record<string, unknown>)?.message || (errorData.error as Record<string, unknown>)?.code || response.statusText;
+        return { success: false, message: `模型不可用: ${errorMsg}` };
+      }
+    } catch (error) {
+      return { success: false, message: `测试错误: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+}
+
+// 预定义的 provider 配置模板
+export const PROVIDER_TEMPLATES: Record<string, {
+  name: string;
+  baseUrl: string;
+  api: string;
+  defaultModelId: string;
+}> = {
+  'openai': {
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    api: 'openai-responses',
+    defaultModelId: 'gpt-4o',
+  },
+  'anthropic': {
+    name: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    api: 'anthropic-messages',
+    defaultModelId: 'claude-3-5-sonnet-latest',
+  },
+  'google': {
+    name: 'Google AI',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    api: 'google-generative-ai',
+    defaultModelId: 'gemini-2.0-flash',
+  },
+  'moonshot': {
+    name: 'Moonshot (Kimi)',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    api: 'openai-completions',
+    defaultModelId: 'kimi-k2.5',
+  },
+  'minimax': {
+    name: 'MiniMax',
+    baseUrl: 'https://api.minimaxi.com/anthropic',
+    api: 'anthropic-messages',
+    defaultModelId: 'MiniMax-M2.5',
+  },
+  'qianfan': {
+    name: '百度千帆',
+    baseUrl: 'https://qianfan.baidubce.com/v2',
+    api: 'openai-completions',
+    defaultModelId: 'ernie-4.0-8k-latest',
+  },
+  'zhipuai': {
+    name: '智谱 AI',
+    baseUrl: 'https://open.bigmodel.cn/api/cogagent/v2',
+    api: 'openai-completions',
+    defaultModelId: 'glm-4',
+  },
+  'ollama': {
+    name: 'Ollama (本地)',
+    baseUrl: 'http://localhost:11434/v1',
+    api: 'openai-completions',
+    defaultModelId: 'llama3',
+  },
+};
+
+// 预定义模型列表
+export const PREDEFINED_MODELS: Record<string, ModelDefinitionConfig[]> = {
+  'openai': [
+    { id: 'gpt-4o', name: 'GPT-4o', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384 },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384 },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 4096 },
+    { id: 'chatgpt-4o-latest', name: 'ChatGPT-4o Latest', api: 'openai-responses', reasoning: false, input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384 },
+  ],
+  'anthropic': [
+    { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', api: 'anthropic-messages', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 4096 },
+  ],
+  'google': [
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', api: 'google-generative-ai', reasoning: true, input: ['text', 'image'], contextWindow: 1000000, maxTokens: 8192 },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', api: 'google-generative-ai', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', api: 'google-generative-ai', reasoning: false, input: ['text', 'image'], contextWindow: 1000000, maxTokens: 8192 },
+  ],
+  'moonshot': [
+    { id: 'kimi-k2.5', name: 'Kimi K2.5', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 256000, maxTokens: 8192 },
+    { id: 'moonshot-v1-128k', name: 'Moonshot V1 128K', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 16384 },
+  ],
+  'minimax': [
+    { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', api: 'anthropic-messages', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 8192 },
+    { id: 'MiniMax-M2.5-highspeed', name: 'MiniMax M2.5 Highspeed', api: 'anthropic-messages', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 8192 },
+  ],
+  'qianfan': [
+    { id: 'ernie-4.0-8k-latest', name: 'ERNIE 4.0 8K', api: 'openai-completions', reasoning: true, input: ['text'], contextWindow: 8000, maxTokens: 4096 },
+    { id: 'ernie-3.5-8k-latest', name: 'ERNIE 3.5 8K', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 8000, maxTokens: 4096 },
+  ],
+  'zhipuai': [
+    { id: 'glm-4', name: 'GLM-4', api: 'openai-completions', reasoning: true, input: ['text'], contextWindow: 128000, maxTokens: 4096 },
+    { id: 'glm-4-flash', name: 'GLM-4 Flash', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 4096 },
+  ],
+  'ollama': [
+    { id: 'llama3', name: 'Llama 3', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 8192, maxTokens: 4096 },
+    { id: 'llama3.1', name: 'Llama 3.1', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 4096 },
+    { id: 'codellama', name: 'Code Llama', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 16384, maxTokens: 4096 },
+    { id: 'qwen2.5', name: 'Qwen 2.5', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096 },
+    { id: 'mistral', name: 'Mistral', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 8192, maxTokens: 4096 },
+  ],
+};
