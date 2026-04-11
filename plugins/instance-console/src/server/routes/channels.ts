@@ -9,7 +9,7 @@ export function createChannelsRouter(channelService: ChannelService) {
    * GET /api/instances/:instanceId/channels
    * 获取实例的渠道列表
    */
-  router.get('/channels', async (req: Request, res: Response) => {
+  router.get('/', async (req: Request, res: Response) => {
     try {
       const instanceId = req.instanceId as string;
       const channels = await channelService.getChannelsByInstance(instanceId);
@@ -31,7 +31,7 @@ export function createChannelsRouter(channelService: ChannelService) {
    * POST /api/instances/:instanceId/channels
    * 添加渠道
    */
-  router.post('/channels', async (req: Request, res: Response) => {
+  router.post('/', async (req: Request, res: Response) => {
     try {
       const instanceId = req.instanceId as string;
       const { type, credentials, routingRules } = req.body;
@@ -58,7 +58,7 @@ export function createChannelsRouter(channelService: ChannelService) {
    * GET /api/instances/:instanceId/channels/:channelId
    * 获取渠道详情
    */
-  router.get('/channels/:channelId', async (req: Request, res: Response) => {
+  router.get('/:channelId', async (req: Request, res: Response) => {
     try {
       const instanceId = req.instanceId as string;
       const { channelId } = req.params;
@@ -80,7 +80,7 @@ export function createChannelsRouter(channelService: ChannelService) {
    * DELETE /api/instances/:instanceId/channels/:channelId
    * 移除渠道
    */
-  router.delete('/channels/:channelId', async (req: Request, res: Response) => {
+  router.delete('/:channelId', async (req: Request, res: Response) => {
     try {
       const instanceId = req.instanceId as string;
       const { channelId } = req.params;
@@ -102,7 +102,7 @@ export function createChannelsRouter(channelService: ChannelService) {
    * POST /api/instances/:instanceId/channels/:channelId/test
    * 测试渠道连接
    */
-  router.post('/channels/:channelId/test', async (req: Request, res: Response) => {
+  router.post('/:channelId/test', async (req: Request, res: Response) => {
     try {
       const instanceId = req.instanceId as string;
       const { channelId } = req.params;
