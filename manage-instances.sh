@@ -158,15 +158,14 @@ get_env_file() {
   local config_dir
   config_dir="$(get_config_dir "$instance_id")"
 
-  # 优先查找 config_dir/.env
+  # 优先从实例配置目录读取（每个实例应有独立的 .env）
   if [[ -f "$config_dir/.env" ]]; then
     echo "$config_dir/.env"
     return
   fi
 
-  # 其次查找脚本所在目录的 .env（多实例部署时 .env 在脚本目录）
+  # 备用：查找脚本所在目录的 .env（需要匹配当前实例）
   if [[ -f "$SCRIPT_DIR/.env" ]]; then
-    # 检查 .env 文件是否对应当前实例
     local env_content
     env_content="$(cat "$SCRIPT_DIR/.env" 2>/dev/null)"
     if echo "$env_content" | grep -q "OPENCLAW_INSTANCE_ID=$instance_id" 2>/dev/null || \
@@ -180,13 +179,43 @@ get_env_file() {
   echo ""
 }
 
-# 从环境文件读取变量
-read_env_var() {
-  local env_file="$1"
+# 从实例配置目录的 .env 读取变量
+read_instance_env() {
+  local instance_id="$1"
   local var_name="$2"
-  if [[ -n "$env_file" && -f "$env_file" ]]; then
-    grep "^${var_name}=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '\r'
+  local config_dir
+  config_dir="$(get_config_dir "$instance_id")"
+
+  # 先从实例目录的 .env 读取
+  local env_file="$config_dir/.env"
+  if [[ -f "$env_file" ]]; then
+    local value
+    value="$(grep "^${var_name}=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')"
+    if [[ -n "$value" ]]; then
+      echo "$value"
+      return
+    fi
   fi
+
+  # 如果配置目录没有 .env，尝试从 openclaw.json 读取 token
+  if [[ "$var_name" == "OPENCLAW_GATEWAY_TOKEN" ]]; then
+    local token
+    token="$(ssh_run node -e "
+      const fs = require('fs');
+      const config = JSON.parse(fs.readFileSync('$config_dir/openclaw.json', 'utf8'));
+      const token = config?.gateway?.auth?.token;
+      if (token) process.stdout.write(token);
+    " 2>/dev/null)" || true
+    if [[ -n "$token" ]]; then
+      echo "$token"
+      return
+    fi
+  fi
+}
+
+# SSH 执行远程命令（用于 90.6 服务器）
+ssh_run() {
+  ssh -o ConnectTimeout=5 root@192.168.90.6 "$@" 2>/dev/null
 }
 
 # 获取实例的 Gateway 端口
@@ -266,10 +295,11 @@ OpenClaw 多实例管理脚本
   \$0 list                    列出所有实例
   \$0 start <instance_id>     启动实例
   \$0 stop <instance_id>      停止实例
-  \$0 restart <instance_id>   重启实例
+  \$0 restart <instance_id>   重启实例（不重建容器）
   \$0 status <instance_id>    查看实例状态
   \$0 logs <instance_id>      查看实例日志
   \$0 redeploy <instance_id>  重新部署实例（清理后重新部署）
+  \$0 rebuild <instance_id>   重建容器（使用新镜像，保留配置）
 
 实例 ID:
   - default: 默认实例（配置目录：\$BASE_DIR）
@@ -280,7 +310,15 @@ OpenClaw 多实例管理脚本
   \$0 start gw1
   \$0 stop gw1
   \$0 logs default
-  \$0 redeploy gw1
+  \$0 rebuild pro1
+
+重建选项（环境变量）:
+  OPENCLAW_IMAGE=openclaw:v2   - 指定使用的镜像，默认：openclaw:local
+  OPENCLAW_SKIP_BUILD=true      - 跳过镜像构建，默认：true
+
+重建示例:
+  \$0 rebuild pro1
+  OPENCLAW_IMAGE=openclaw:v2 \$0 rebuild pro1
 
 重新部署选项（环境变量）:
   OPENCLAW_PORT_OFFSET       - 端口偏移量，默认：0
@@ -435,24 +473,121 @@ cmd_restart() {
 
   info "重启实例：$instance_id"
 
-  # 设置环境变量并重启
-  export OPENCLAW_CONFIG_DIR="$config_dir"
-  export OPENCLAW_WORKSPACE_DIR="$config_dir/workspace"
-
-  # 从环境文件读取其他变量
-  local env_file
-  env_file="$(get_env_file "$instance_id")"
-  if [[ -n "$env_file" ]]; then
-    # shellcheck disable=SC1090
+  # 从实例配置目录读取 .env
+  local env_file="$config_dir/.env"
+  if [[ -f "$env_file" ]]; then
     set -a
+    # shellcheck disable=SC1090
     source "$env_file"
     set +a
   fi
+
+  # 设置环境变量
+  export OPENCLAW_CONFIG_DIR="$config_dir"
+  export OPENCLAW_WORKSPACE_DIR="$config_dir/workspace"
+  export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
+  export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
+  export OPENCLAW_IMAGE="${OPENCLAW_IMAGE:-openclaw:local}"
 
   cd "$SCRIPT_DIR"
   docker compose restart openclaw-gateway
 
   success "实例 '$instance_id' 已重启"
+}
+
+# 重建实例（使用新镜像重建容器，保留配置）
+cmd_rebuild() {
+  local instance_id="$1"
+
+  if ! instance_exists "$instance_id"; then
+    fail "实例 '$instance_id' 不存在"
+  fi
+
+  local config_dir
+  config_dir="$(get_config_dir "$instance_id")"
+
+  info "重建实例：$instance_id"
+  info "配置目录：$config_dir"
+
+  echo ""
+  warn "即将重建实例 '$instance_id' 的容器"
+  warn "此操作将："
+  echo "  1. 停止并删除当前容器"
+  echo "  2. 使用新镜像重新创建容器"
+  echo "  3. 保留配置文件（不丢失）"
+  echo ""
+
+  # 获取当前镜像（如果没有设置，默认为 openclaw:local）
+  local current_image="${OPENCLAW_IMAGE:-openclaw:local}"
+  echo "当前镜像：$current_image"
+  echo ""
+
+  # 从实例配置目录读取 .env
+  local env_file="$config_dir/.env"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+
+  # 从 openclaw.json 读取 token（确保不丢失）
+  local existing_token=""
+  if [[ -f "$config_dir/openclaw.json" ]]; then
+    existing_token="$(node -e "
+      const fs = require('fs');
+      const config = JSON.parse(fs.readFileSync('$config_dir/openclaw.json', 'utf8'));
+      const token = config?.gateway?.auth?.token;
+      if (token) process.stdout.write(token);
+    " 2>/dev/null)" || true
+  fi
+
+  # 设置环境变量
+  export OPENCLAW_INSTANCE_ID="$instance_id"
+  export OPENCLAW_CONFIG_DIR="$config_dir"
+  export OPENCLAW_WORKSPACE_DIR="$config_dir/workspace"
+  export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
+  export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
+  export OPENCLAW_IMAGE="${OPENCLAW_IMAGE:-$current_image}"
+  export OPENCLAW_SKIP_BUILD="${OPENCLAW_SKIP_BUILD:-true}"
+
+  # 如果有现有的 token，复用它
+  if [[ -n "$existing_token" ]]; then
+    export OPENCLAW_GATEWAY_TOKEN="$existing_token"
+  fi
+
+  cd "$SCRIPT_DIR"
+
+  # 停止并删除容器
+  info "步骤 1/2: 清理旧容器..."
+  local compose_project="openclaw-${instance_id}"
+  docker compose -p "$compose_project" down --remove-orphans 2>/dev/null || true
+
+  # 直接删除容器（确保清理干净）
+  local container_name="openclaw-${instance_id}-openclaw-gateway-1"
+  if docker ps -a --format '{{.Names}}' | grep -q "^${container_name}$"; then
+    info "  删除容器：$container_name"
+    docker rm -f "$container_name" 2>/dev/null || true
+  fi
+
+  # 重新创建容器
+  info "步骤 2/2: 创建新容器..."
+  if [[ -x "$SCRIPT_DIR/docker-instance-setup.sh" ]]; then
+    OPENCLAW_SKIP_BUILD=true OPENCLAW_NO_ONBOARD=true \
+      OPENCLAW_NEW_TOKEN=false \
+      "$SCRIPT_DIR/docker-instance-setup.sh"
+  else
+    fail "找不到 docker-instance-setup.sh 脚本"
+  fi
+
+  # 验证
+  sleep 3
+  if container_running "$instance_id"; then
+    success "实例 '$instance_id' 重建成功!"
+    info "使用 '$0 status $instance_id' 查看状态"
+  else
+    warn "容器可能还在启动中，请稍后检查状态"
+  fi
 }
 
 # 查看实例状态
@@ -548,31 +683,29 @@ cmd_redeploy() {
   # 步骤 1/3: 清理容器
   info "步骤 1/3: 清理容器..."
 
-  # 设置环境变量用于 docker compose 命令
-  export OPENCLAW_INSTANCE_ID="$instance_id"
-  export OPENCLAW_CONFIG_DIR="$config_dir"
-  export OPENCLAW_WORKSPACE_DIR="$config_dir/workspace"
-
-  # 从配置目录的 .env 文件读取配置（如果存在）
-  local local_env_file="$config_dir/.env"
-  if [[ -f "$local_env_file" ]]; then
+  # 从实例配置目录读取 .env
+  local env_file="$config_dir/.env"
+  if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090
-    source "$local_env_file"
+    source "$env_file"
     set +a
   fi
 
-  # 设置默认值
+  # 设置环境变量
+  export OPENCLAW_INSTANCE_ID="$instance_id"
+  export OPENCLAW_CONFIG_DIR="$config_dir"
+  export OPENCLAW_WORKSPACE_DIR="$config_dir/workspace"
   export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
   export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
   export OPENCLAW_IMAGE="${OPENCLAW_IMAGE:-openclaw:local}"
 
   # 使用 docker compose down 清理容器
   cd "$SCRIPT_DIR"
-  docker compose -f docker-compose.yml -f docker-compose.extra.yml down --remove-orphans 2>/dev/null || true
+  local compose_project="openclaw-${instance_id}"
+  docker compose -p "$compose_project" down --remove-orphans 2>/dev/null || true
 
   # 备用方案：直接删除容器
-  local compose_project="openclaw-${instance_id}"
   local container_names
   container_names=$(docker ps -a --filter "label=com.docker.compose.project=$compose_project" --format "{{.Names}}" 2>/dev/null || true)
   if [[ -n "$container_names" ]]; then
@@ -664,6 +797,12 @@ case "$command" in
       fail "请指定实例 ID"
     fi
     cmd_logs "$1"
+    ;;
+  rebuild)
+    if [[ $# -lt 1 ]]; then
+      fail "请指定实例 ID"
+    fi
+    cmd_rebuild "$1"
     ;;
   redeploy)
     if [[ $# -lt 1 ]]; then
