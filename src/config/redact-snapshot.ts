@@ -804,6 +804,34 @@ function restoreRedactedValuesWithLookup(
 }
 
 /**
+ * Helper to detect if an object contains REDACTED_SENTINEL at a nested sensitive path.
+ * This handles the case where we recurse into an object, but the sentinel value
+ * is at a deeper path (e.g., gateway.auth.token) that IS sensitive even though
+ * the parent path (gateway.auth) is not.
+ */
+function findNestedSentinelInObject(
+  incoming: Record<string, unknown>,
+  original: unknown,
+  basePath: string,
+  hints?: ConfigUiHints,
+): { found: boolean; restored: unknown } {
+  if (!incoming || typeof incoming !== "object") {
+    return { found: false, restored: undefined };
+  }
+  for (const [key, value] of Object.entries(incoming)) {
+    const path = basePath ? `${basePath}.${key}` : key;
+    if (value === REDACTED_SENTINEL && isSensitivePath(path)) {
+      // Restore from original using the key directly
+      const origRecord = toObjectRecord(original);
+      if (key in origRecord) {
+        return { found: true, restored: origRecord[key] };
+      }
+    }
+  }
+  return { found: false, restored: undefined };
+}
+
+/**
  * Worker for restoreRedactedValues().
  * Used when ConfigUiHints are NOT available.
  */
@@ -840,22 +868,32 @@ function restoreRedactedValuesGuessing(
     ) {
       result[key] = restoreOriginalValueOrThrow({ key, path, original: orig });
     } else if (typeof value === "object" && value !== null) {
-      const canRestoreSecretRef =
-        !isExplicitlyNonSensitivePath(hints, [path, wildcardPath]) &&
-        (isSensitivePath(path) ||
-          hasSensitiveUrlHintPath(hints, [path, wildcardPath]) ||
-          isSensitiveUrlPath(path));
-      if (canRestoreSecretRef) {
-        const restoredSecretRef = maybeRestoreSecretRefId({
-          incoming: value,
-          original: orig[key],
-          path,
-        });
-        result[key] = restoredSecretRef.handled
-          ? restoredSecretRef.value
-          : restoreRedactedValuesGuessing(value, orig[key], path, hints);
+      // Bug fix: When value is an object containing sentinels, check if any nested
+      // value is REDACTED_SENTINEL at a sensitive path BEFORE recursing.
+      // This handles the case where the current path (prefix.key) is NOT sensitive
+      // but a deeper path WOULD be sensitive (e.g., gateway.auth.token when
+      // gateway.auth is not sensitive but gateway.auth.token is).
+      const nestedSentinelSensitive = findNestedSentinelInObject(value, orig[key], path, hints);
+      if (nestedSentinelSensitive.found) {
+        result[key] = nestedSentinelSensitive.restored;
       } else {
-        result[key] = restoreRedactedValuesGuessing(value, orig[key], path, hints);
+        const canRestoreSecretRef =
+          !isExplicitlyNonSensitivePath(hints, [path, wildcardPath]) &&
+          (isSensitivePath(path) ||
+            hasSensitiveUrlHintPath(hints, [path, wildcardPath]) ||
+            isSensitiveUrlPath(path));
+        if (canRestoreSecretRef) {
+          const restoredSecretRef = maybeRestoreSecretRefId({
+            incoming: value,
+            original: orig[key],
+            path,
+          });
+          result[key] = restoredSecretRef.handled
+            ? restoredSecretRef.value
+            : restoreRedactedValuesGuessing(value, orig[key], path, hints);
+        } else {
+          result[key] = restoreRedactedValuesGuessing(value, orig[key], path, hints);
+        }
       }
     } else {
       result[key] = value;
